@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LA2 Studio</title>
+<meta name="description" content="View, play, edit and export LA2 2D layouts from Metal Gear Solid 4, Metal Gear Online 2 and Metal Gear Arcade, entirely in your browser.">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="assets/icon.svg" alt="" width="22" height="22"><b>LA2 Studio</b></div>
+  <button id="openDir" class="primary" title="Pick the folder with your .la2 / .dar files (o)">Open folder…</button>
+  <label class="btn" id="openDirAlt" title="Pick a folder (works in every browser)">Upload folder<input type="file" id="dirInput" webkitdirectory multiple hidden></label>
+  <span class="info" id="info">No folder open</span>
+  <span class="busy" id="busy" aria-live="polite"></span>
+  <span class="msg" id="msg" aria-live="polite"></span>
+  <span class="spacer"></span>
+  <button id="settingsBtn" class="ghost" title="Settings">Settings</button>
+  <a class="ghost btn" href="https://github.com/Zoft123/LA2_Studio" target="_blank" rel="noopener" title="Source and documentation">GitHub</a>
+</header>
+
+<main>
+  <section class="pane left">
+    <div class="pane-head">Folders</div>
+    <div class="scroll" id="tree"><div class="empty">Open a folder that contains LA2 files, their .dar archives or a whole game tree (for example <code>USRDIR/o</code>, <code>cdrom.img/stage</code> or an MGS4 <code>slotdat</code> folder).</div></div>
+    <div class="pane-head row"><span>Files</span><label class="small"><input type="checkbox" id="recursive"> subfolders</label></div>
+    <div class="filterbar"><input id="filter" placeholder="Filter files… (/)" aria-label="Filter files"></div>
+    <div class="dim small pad-x" id="fcount"></div>
+    <div class="scroll" id="files"></div>
+  </section>
+
+  <section class="pane center">
+    <div class="toolbar">
+      <select id="action" aria-label="Action"><option value="-1">Initial state</option></select>
+      <button id="play" title="Play / stop (Space)" aria-label="Play">▶</button>
+      <input type="range" id="frame" min="0" max="0" value="0" aria-label="Frame">
+      <span id="flabel" class="dim mono">0</span>
+      <label class="dim" title="auto = the action's loop flag">Play <select id="pmode"><option value="auto">auto</option><option value="loop">loop</option><option value="once">once</option><option value="pingpong">ping-pong</option></select></label>
+      <label class="dim">fps <select id="fps"><option>15</option><option selected>30</option><option>60</option><option>120</option><option>180</option></select></label>
+      <label class="dim">Zoom <select id="scale"><option value="fit" selected>fit</option><option>0.25</option><option>0.5</option><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+      <label class="dim">bg <input id="bg" type="color" value="#202830" aria-label="Background colour"></label>
+      <label class="dim" title="Drag the selected object to move it; Shift+arrows nudge 1 px, Ctrl+Shift+arrows 10 px"><input type="checkbox" id="dragmove"> Drag to move</label>
+    </div>
+    <div class="toolbar">
+      <div class="group">
+        <button id="exportAnim" title="Export the current action as an animation">Export animation</button>
+        <select id="exportFmt" aria-label="Animation format"><option value="webp-lossless">WebP lossless</option><option value="webp-95">WebP 95</option><option value="webp-90">WebP 90</option><option value="webp-80">WebP 80</option><option value="apng">APNG</option></select>
+        <button id="exportPng" title="Save the current frame as PNG">Frame PNG</button>
+      </div>
+      <div class="group">
+        <button id="undo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
+        <button id="redo" title="Redo (Ctrl+Y)" disabled>↷ Redo</button>
+        <button id="revert" title="Discard all edits of this file">Revert</button>
+      </div>
+      <div class="group">
+        <button id="saveLa2" title="Download the edited .la2">Save .la2</button>
+        <button id="saveDar" title="Download the archive holding this file, with the edited .la2 inside (re-encrypted for MGO2)">Save .dar</button>
+        <button id="saveTex" title="Download edited texture archives (.dlz)" disabled>Save textures</button>
+      </div>
+    </div>
+    <div id="events" class="events" hidden></div>
+    <div id="stage" class="stage"><canvas id="view" aria-label="Layout preview"></canvas><div class="stage-empty" id="stageEmpty">Pick a file to preview it.</div></div>
+  </section>
+
+  <section class="pane right">
+    <div class="tabs" id="tabs" role="tablist">
+      <button data-t="objects" class="on" role="tab">Objects</button><button data-t="props" role="tab">Properties</button><button data-t="textures" role="tab">Textures</button><button data-t="tables" role="tab">Tables</button><button data-t="keys" role="tab">Action keys</button><button data-t="file" role="tab">File</button>
+    </div>
+    <div class="scroll" id="panel"></div>
+  </section>
+</main>
+
+<dialog id="settings">
+  <form method="dialog" class="dlg">
+    <h2>Settings</h2>
+    <label>MGO2 decryption key override <input id="keyOverride" placeholder="auto (e.g. stage/r_sna01_n)"></label>
+    <p class="dim small">MGO2 stage files are decrypted with a key named after their stage folder. It is found from the folder path (or by trying the folder names you opened); set it here only for copies kept outside the <code>stage/&lt;name&gt;</code> layout under an unrelated name.</p>
+    <label><input type="checkbox" id="showGuesses" checked> Show readable command names in action keys</label>
+    <div class="row end"><button value="close" class="primary">Done</button></div>
+  </form>
+</dialog>
+
+<dialog id="exportDlg">
+  <div class="dlg">
+    <h2>Exporting</h2>
+    <p id="exportStatus">Preparing…</p>
+    <progress id="exportProg" max="1" value="0"></progress>
+    <div class="row end"><button id="exportCancel">Cancel</button></div>
+  </div>
+</dialog>
+
+<script type="module" src="js/app/main.js"></script>
+</body>
+</html>

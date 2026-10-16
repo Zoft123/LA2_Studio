@@ -1,0 +1,13 @@
+# game files and outputs never belong in the repository
+*.la2
+*.dar
+*.qar
+*.dlz
+*.txn
+*.dld
+*.webp
+*.apng
+node_modules/
+__pycache__/
+.DS_Store
+Thumbs.db
