@@ -46,7 +46,10 @@
     <div class="toolbar">
       <div class="group">
         <button id="exportAnim" title="Export the current action as an animation">Export animation</button>
-        <select id="exportFmt" aria-label="Animation format"><option value="webp-lossless">WebP lossless</option><option value="webp-95">WebP 95</option><option value="webp-90">WebP 90</option><option value="webp-80">WebP 80</option><option value="webp-70">WebP 70</option><option value="webp-50">WebP 50</option><option value="apng">APNG</option></select>
+        <select id="exportFmt" aria-label="Export format" title="Video formats are far smaller; WebP lossless / APNG are pixel-exact">
+          <optgroup label="Video (small files)"><option value="av1-444-hq">AV1 4:4:4 · high quality</option><option value="av1-444" selected>AV1 4:4:4 · near-lossless</option><option value="av1-444-small">AV1 4:4:4 · compact</option><option value="vp9">VP9 WebM</option><option value="h264">H.264 MP4 · most compatible</option></optgroup>
+          <optgroup label="Animated image (exact / lossy)"><option value="webp-lossless">WebP lossless</option><option value="webp-95">WebP 95</option><option value="webp-90">WebP 90</option><option value="webp-80">WebP 80</option><option value="webp-70">WebP 70</option><option value="webp-50">WebP 50</option><option value="apng">APNG (lossless)</option></optgroup>
+        </select>
         <button id="exportPng" title="Save the current frame as PNG">Frame PNG</button>
       </div>
       <div class="group">

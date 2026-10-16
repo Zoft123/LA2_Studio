@@ -6,7 +6,7 @@ import { readDar, writeDar } from '../formats/archives.js';
 import { encrypt } from '../formats/mgo2crypt.js';
 import { Scene, Timeline, COMMANDS } from '../engine/scene.js';
 import { Renderer } from '../engine/gl.js';
-import { WebPWriter, APNGWriter, encodePNG, frameHash, webpSupported } from '../engine/export.js';
+import { WebPWriter, APNGWriter, VideoWriter, VIDEO_FORMATS, videoFormats, encodePNG, webpSupported } from '../engine/export.js';
 import { hex, toHex, fromHex, latin1, Reader } from '../core/bin.js';
 import { replaceTexture } from './texedit.js';
 import { zipSync } from '../vendor/fflate.js';
@@ -423,13 +423,21 @@ $('#exportAnim').onclick = async () => {
   if (!S.scene) return;
   const a = +$('#action').value;
   if (a < 0) { msg('Pick an action first'); return; }
-  const fmt = $('#exportFmt').value;
-  let webp = fmt.startsWith('webp');
-  if (webp && !(await webpSupported())) { msg('This browser cannot encode WebP; exporting APNG instead'); webp = false; }
+  let fmt = $('#exportFmt').value;
+  const video = !!VIDEO_FORMATS[fmt];
+  const baseName = basename(S.file.entry || S.file.path).replace(/\.la2$/i, '') + `_action${a}`;
+  // long videos stream straight to disk where the browser allows it (asked first: it needs the click)
+  let fileHandle = null;
+  if (video && window.showSaveFilePicker) {
+    const f = VIDEO_FORMATS[fmt];
+    try { fileHandle = await window.showSaveFilePicker({ suggestedName: `${baseName}.${f.ext}`, types: [{ description: f.label, accept: { [f.mime]: ['.' + f.ext] } }] }); }
+    catch (e) { if (e.name === 'AbortError') return; fileHandle = null; }
+  }
   stop();
   const dlg = $('#exportDlg'), status = $('#exportStatus'), prog = $('#exportProg');
   exportCancel = false; dlg.showModal();
   const t0 = performance.now();
+  let writer = null;
   try {
     // a private scene, timeline and GL context so the preview is untouched
     const scene = new Scene(S.la, S.lib);
@@ -439,33 +447,49 @@ $('#exportAnim').onclick = async () => {
     const canvas = document.createElement('canvas');
     const r = new Renderer(canvas);
     const fps = +$('#fps').value, step = Math.max(1, Math.ceil(fps / 60)), dur = 1000 * step / fps;
-    const length = Math.min(tl.length(), 3600), frames = Math.floor(length / step) + 1;
+    const frames = Math.floor(tl.length() / step) + 1;
     const scale = scaleNow(), view = S.scene.bounds(), bg = bgColor();
+    const W = Math.max(8, Math.round(view.w * scale)), H = Math.max(8, Math.round(view.h * scale));
+    let kind = video ? 'video' : fmt.startsWith('webp') ? 'webp' : 'apng';
+    if (video) {
+      const ok = await videoFormats(W + (W & 1), H + (H & 1));
+      if (!ok[fmt]) {
+        const alt = Object.keys(VIDEO_FORMATS).find(k => ok[k]);
+        if (!alt) { msg('This browser cannot encode video; exporting APNG instead'); kind = 'apng'; }
+        else { msg(`${VIDEO_FORMATS[fmt].label} is not available here; using ${VIDEO_FORMATS[alt].label}`); fmt = alt; }
+      }
+      if (kind === 'video') { writer = new VideoWriter(fmt, ok[fmt], W, H, 1000 / dur); await writer.open(fileHandle); }
+    }
+    if (kind === 'webp' && !(await webpSupported())) { msg('This browser cannot encode WebP; exporting APNG instead'); kind = 'apng'; }
     const q = fmt === 'webp-lossless' ? 1 : +(fmt.split('-')[1] || 90) / 100;
-    let writer = null, last = null, lastHash = 0, distinct = 0;
+    let distinct = 0;
     for (let i = 0; i < frames; i++) {
-      if (exportCancel) { msg('export cancelled'); return; }
+      if (exportCancel) { if (writer && writer.abort) await writer.abort(); msg('export cancelled'); return; }
       scene.seek(i * step);
       r.draw(scene.primitives(), view, scale, bg, texSource);
-      const px = r.pixels();
-      if (!writer) writer = webp ? new WebPWriter(px.w, px.h, q) : new APNGWriter(px.w, px.h);
-      const h = frameHash(px.rgba);
-      if (last && h === lastHash && px.rgba.every((v, k) => v === last[k])) writer.extend(dur);
-      else { await writer.add(px.rgba, dur); last = px.rgba; lastHash = h; distinct++; }
+      if (kind === 'video') { await writer.add(canvas, bg, dur); distinct++; }
+      else {
+        const px = r.pixels();
+        if (!writer) writer = kind === 'webp' ? new WebPWriter(px.w, px.h, q) : new APNGWriter(px.w, px.h);
+        if (await writer.add(px.rgba, dur)) distinct++;
+      }
       if (i % 4 === 0) {
-        status.textContent = `Frame ${i + 1} / ${frames} · ${distinct} distinct · ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+        const el = (performance.now() - t0) / 1000, eta = el / (i + 1) * (frames - i - 1);
+        status.textContent = `Frame ${i + 1} / ${frames} · ${el.toFixed(0)} s elapsed · about ${eta < 90 ? eta.toFixed(0) + ' s' : (eta / 60).toFixed(0) + ' min'} left`;
         prog.value = (i + 1) / frames;
         await sleep(0);
       }
     }
-    status.textContent = 'Writing file…';
+    status.textContent = 'Finishing…';
     await sleep(0);
-    const blob = writer.finish();
-    const name = basename(S.file.entry || S.file.path).replace(/\.la2$/i, '') + `_action${a}.${webp ? 'webp' : 'png'}`;
-    download(blob, name);
-    msg(`exported ${name} (${(blob.size / 1048576).toFixed(1)} MB, ${distinct} distinct frames, ${((performance.now() - t0) / 1000).toFixed(1)} s)`);
+    const blob = kind === 'video' ? await writer.finish() : writer.finish();
+    const ext = kind === 'video' ? VIDEO_FORMATS[fmt].ext : kind === 'webp' ? 'webp' : 'png';
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    if (blob) download(blob, `${baseName}.${ext}`);
+    const size = blob ? blob.size : null;
+    msg(`exported ${baseName}.${ext}${size !== null ? ` (${(size / 1048576).toFixed(1)} MB)` : ' to the chosen file'} · ${frames} frames · ${secs} s`);
     r.dropTextures();
-  } catch (e) { msg('Export failed: ' + e.message, true); console.error(e); }
+  } catch (e) { msg('Export failed: ' + e.message, true); console.error(e); if (writer && writer.abort) await writer.abort(); }
   finally { dlg.close(); }
 };
 

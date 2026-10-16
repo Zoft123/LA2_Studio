@@ -59,8 +59,19 @@ data is included in this repository.
   the original mip layout, and written into the archive's data entries.
 
 ### Export and saving
-- Animated **WebP** (lossless or lossy) or **APNG**, at the preview's zoom and frame rate; identical frames are
-  merged, timing stays exact. Single frames as PNG.
+- **Video** (small files, made by the browser's own encoders):
+  - **AV1 4:4:4** — full colour resolution (no chroma subsampling, the RGB pixels are stored directly) in three
+    presets: *high quality*, *near-lossless* (default) and *compact*, all visually lossless (about 51–55 dB PSNR).
+  - **VP9 WebM** and **H.264 MP4** for the widest compatibility (4:2:0 colour).
+  - Long videos stream straight to the chosen file in Chrome / Edge, so length is not limited by memory.
+- **Exact animated images:** lossless **WebP** (or lossy 95 → 50) and **APNG**. Frames after the first store only
+  the area that changed, with unchanged pixels left transparent, so the result is pixel-exact; timing is exact.
+- Single frames as PNG.
+
+Which to choose: animated layouts that change across the whole screen every frame (fades, scrolling, video-like
+backgrounds) make any lossless image format huge — a 10-minute MGS4 clip is around 13 GB as lossless WebP but
+about 320 MB as AV1 4:4:4 near-lossless, or under 100 MB as H.264. Use the image formats for short or mostly static
+animations, or when you need every pixel exact.
 - Save the edited `.la2`, the `.dar` archive that holds it (with the edited file inside, re-encrypted for MGO2),
   or the edited texture archives.
 
@@ -133,6 +144,9 @@ A browser with **WebGL 2** is required (all current desktop browsers).
   reads the same files.
 - Animated WebP export uses the browser's WebP encoder (Chrome, Edge, Firefox). Where it is missing (Safari), the
   export falls back to APNG.
+- Video export uses WebCodecs (Chrome, Edge; recent Firefox and Safari support part of it). AV1 4:4:4 plays in
+  Chrome, Edge, Firefox, VLC and mpv; H.264 MP4 plays almost everywhere. Unsupported formats fall back to another
+  available one.
 
 ## Limitations
 
@@ -154,15 +168,16 @@ Planned and likely future updates:
 - **Session persistence:** keep edits across reloads (IndexedDB) and write them straight back into the opened
   folder where the browser allows it.
 - **Name dictionary:** readable names for object, action and texture hashes contributed by the community.
-- **More exports:** GIF and video (WebM / MP4) export, sprite-sheet export.
+- **More exports:** GIF and sprite-sheet export, audio-free MOV / ProRes-style intermediates if browsers gain them.
 - **Font tools:** glyph table view and editing.
 
 Issues and pull requests are welcome.
 
 ## Development
 
-Plain ES modules, no build step and no runtime dependencies beyond the vendored
-[fflate](https://github.com/101arrowz/fflate) (deflate / inflate).
+Plain ES modules, no build step. Vendored libraries (MIT): [fflate](https://github.com/101arrowz/fflate)
+(deflate / inflate), [webm-muxer](https://github.com/Vanilagy/webm-muxer) and
+[mp4-muxer](https://github.com/Vanilagy/mp4-muxer) (video containers).
 
 ```
 index.html, css/          the page
@@ -190,6 +205,8 @@ The file format is described in [docs/FORMAT.md](docs/FORMAT.md).
 
 - MGO2 stage-file decryption follows the method implemented by **HavenStudio2** from the MGO2 revival community.
 - Deflate / inflate: **[fflate](https://github.com/101arrowz/fflate)** by Arjun Barrett (MIT).
+- Video containers: **[webm-muxer](https://github.com/Vanilagy/webm-muxer)** and
+  **[mp4-muxer](https://github.com/Vanilagy/mp4-muxer)** by Vanilagy (MIT).
 
 ## Legal
 
