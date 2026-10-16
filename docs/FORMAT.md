@@ -56,6 +56,10 @@ usTriangleStripCount, usStringCount, usTypingCount) and usPad.
 | unitCount | u16 | units (TriangleStrip) |
 | layerIndex | u16 | layer |
 
+The engine dispatches on the **low byte** of the type word and accepts only 0–11. Some MGS4 layouts converted
+from Flash mark shapes with extra bits in that byte (for example `0x3016`: a Quad with bits 0x10, 0x1000, 0x2000);
+the game never draws those (they are mask / guide shapes), so LA2 Studio hides them unless asked to show them.
+
 ### Object types
 
 | Type | Name | Drawn as | Colours |

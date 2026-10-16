@@ -33,6 +33,8 @@ data is included in this repository.
 - All object types: groups (Nul / Ctrl), Box, Sprt, RSprt, Triangle, Quad, Line, LineStrip, TriangleStrip,
   String and Typing (typewriter text with its reveal and colour fade).
 - Text laid out like the game: font-cell glyph sizes, multi-line strings, left / right / centre / justified.
+- Mask / guide shapes in MGS4's Flash-converted layouts, which the game never draws, are hidden (they can be shown
+  from Settings).
 - Real-time playback at 15–180 fps with loop, once and ping-pong modes, frame stepping and scrubbing.
 - **Command timeline:** actions that start, loop or stop other actions and reorder layers are simulated, so
   composite screens play as a whole; fired commands are listed and clickable.

@@ -161,7 +161,7 @@ async function openFile(f, keep = null) {
     S.file = f; S.bytes = bytes; S.la = la;
     S.scene = new Scene(la, S.lib);
     if (!keep) { S.sel = null; S.hideObj = new Set(); S.hideLayer = new Set(); }
-    S.scene.hidden = S.hideObj; S.scene.hiddenLayers = S.hideLayer;
+    S.scene.hidden = S.hideObj; S.scene.hiddenLayers = S.hideLayer; S.scene.showGuides = !!settings.guides;
     const pd = $('#action');
     pd.innerHTML = '<option value="-1">Initial state</option>' + la.actions.map((a, i) => {
       const h = la.actionHash.get(i);
@@ -433,7 +433,7 @@ $('#exportAnim').onclick = async () => {
   try {
     // a private scene, timeline and GL context so the preview is untouched
     const scene = new Scene(S.la, S.lib);
-    scene.hidden = S.hideObj; scene.hiddenLayers = S.hideLayer;
+    scene.hidden = S.hideObj; scene.hiddenLayers = S.hideLayer; scene.showGuides = !!settings.guides;
     const tl = new Timeline(S.la, a, $('#pmode').value);
     scene.setTimeline(tl);
     const canvas = document.createElement('canvas');
@@ -470,12 +470,14 @@ $('#exportAnim').onclick = async () => {
 };
 
 // ---- settings ------------------------------------------------------------------------------------------------
-$('#settingsBtn').onclick = () => { $('#keyOverride').value = settings.key || ''; $('#settings').showModal(); };
+$('#settingsBtn').onclick = () => { $('#keyOverride').value = settings.key || ''; $('#showGuides').checked = !!settings.guides; $('#settings').showModal(); };
 $('#settings').addEventListener('close', () => {
   settings.key = $('#keyOverride').value.trim();
   if (settings.key && !settings.key.startsWith('stage/')) settings.key = 'stage/' + settings.key;
+  settings.guides = $('#showGuides').checked;
   saveSettings();
   if (S.lib) { S.lib.settings = settings; S.lib.raw.clear(); }
+  if (S.scene) { S.scene.showGuides = settings.guides; render(); }
 });
 
 // ---- keyboard ---------------------------------------------------------------------------------------------------
@@ -553,7 +555,7 @@ function tabObjects(P) {
       const t = textOf(o), hid = hiddenOf(o);
       out.push(`<div class="obj${o.index === S.sel ? ' sel' : ''}${hid ? ' hidden' : ''}" data-i="${o.index}" style="padding-left:${6 + depth * 12}px">` +
         `<input type="checkbox" data-hide="${o.id}" ${S.hideObj.has(o.id) ? '' : 'checked'} aria-label="visible"> <span class="t">${o.type_name}</span> ` +
-        `<span class="h">#${hex(o.hash)} id${o.id}</span>${t ? ` <span class="txt">"${esc(t)}"</span>` : ''}${hid ? ' (hidden)' : ''}</div>`);
+        `<span class="h">#${hex(o.hash)} id${o.id}</span>${t ? ` <span class="txt">"${esc(t)}"</span>` : ''}${hid ? ' (hidden)' : ''}${(o.flags & 0xFF) > 0x0B ? ' <span class="h">(guide shape, not drawn by the game)</span>' : ''}</div>`);
       walk(o.id, depth + 1);
     }
   };

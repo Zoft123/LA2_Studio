@@ -399,6 +399,9 @@ export class Scene {
     const walk = (id, M, col) => {
       const o = this.objs.get(id), st = state.get(id);
       if (!o || !st || !st.visible || this.hidden.has(id) || off.has(o.layer)) return;
+      // libla dispatches on the type word's low byte and only accepts 0..11; MGS4's Flash-converted layouts mark
+      // shapes with extra bits there (e.g. 0x3016): they are not drawn by the game (mask / guide shapes).
+      if ((o.flags & 0xFF) > 0x0B && !this.showGuides) return;
       const t = o.type;
       const [x, y] = st.xy[0] && st.xy[0][0] ? st.xy[0][0] : [0, 0];
       const tf = pts => pts.map(([px, py]) => [M[0] * px + M[1] * py + M[2], M[3] * px + M[4] * py + M[5]]);

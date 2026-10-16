@@ -77,7 +77,8 @@
     <h2>Settings</h2>
     <label>MGO2 decryption key override <input id="keyOverride" placeholder="auto (e.g. stage/r_sna01_n)"></label>
     <p class="dim small">MGO2 stage files are decrypted with a key named after their stage folder. It is found from the folder path (or by trying the folder names you opened); set it here only for copies kept outside the <code>stage/&lt;name&gt;</code> layout under an unrelated name.</p>
-    <label><input type="checkbox" id="showGuesses" checked> Show readable command names in action keys</label>
+    <label><input type="checkbox" id="showGuides"> Draw guide shapes</label>
+    <p class="dim small">Some MGS4 layouts (converted from Flash) contain mask / guide shapes, marked by extra bits in their object type, that the game never draws. They are hidden unless this is ticked.</p>
     <div class="row end"><button value="close" class="primary">Done</button></div>
   </form>
 </dialog>
