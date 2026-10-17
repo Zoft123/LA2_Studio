@@ -139,3 +139,22 @@ export function keyForPath(path) {
   }
   return null;
 }
+
+// ---- encryption by disc / title ID ----------------------------------------------------------------------------
+// MGO2 data (USRDIR/o) is always encrypted. The MGS4 data (USRDIR/mgs) is plain on the Blu-ray discs and encrypted
+// (same scheme, same "stage/<name>" keys) on the PSN releases. BLJM60082 is the standalone MGO disc.
+const DISC_ALL_ENCRYPTED = new Set(['NPEB02182', 'NPJB00698', 'NPUB31633', 'BLJM60082']);
+const DISC_MGS_PLAIN = new Set(['BLES00246', 'BLUS30109', 'BLJM67001', 'BLAS55004', 'BLKS25002', 'BLUS30148',
+  'BLJM67002', 'BLJM67003', 'BLJM57001', 'BLAS55005']);
+
+/** For a path inside a known MGS4 / MGO disc or PSN title: {disc, area: 'o'|'mgs', encrypted: bool}, else null. */
+export function discEncryption(path) {
+  const parts = path.split(/[\/\\]/).filter(Boolean);
+  const di = parts.findIndex(p => DISC_ALL_ENCRYPTED.has(p.toUpperCase()) || DISC_MGS_PLAIN.has(p.toUpperCase()));
+  if (di < 0) return null;
+  const disc = parts[di].toUpperCase();
+  const u = parts.findIndex((p, i) => i > di && p.toUpperCase() === 'USRDIR');
+  const area = (u >= 0 && u + 1 < parts.length - 1 ? parts[u + 1] : '').toLowerCase();
+  if (area !== 'o' && area !== 'mgs') return null;
+  return { disc, area, encrypted: area === 'o' || DISC_ALL_ENCRYPTED.has(disc) };
+}

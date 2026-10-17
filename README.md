@@ -87,7 +87,7 @@ animations, or when you need every pixel exact.
 
 | Game | Platform | LA2 location | Notes |
 |---|---|---|---|
-| Metal Gear Solid 4 | PS3 | `slotdat/*/N/*.la2`, stage archives | big-endian; very large layouts supported |
+| Metal Gear Solid 4 | PS3 | `slotdat/*/N/*.la2`, stage archives | big-endian; very large layouts supported; PSN releases are encrypted |
 | Metal Gear Online 2 | PS3 | inside `stage/*/*.dar` | stage archives are encrypted; decrypted automatically |
 | Metal Gear Arcade | PC | `stage/*/Dar/*.la2`, `*.dar` | little-endian archives |
 
@@ -146,6 +146,10 @@ download the edited files, then copy them into your game folder (keep a backup o
   base stage folder's DLZs.
 - **MGO2 decryption** uses the stage folder name (`stage/<name>`) taken from the path; for copies kept elsewhere it
   tries the folder names it can see, and **Settings** lets you set the key by hand.
+- **Disc and PSN title IDs:** when the opened folder includes the title ID folder, it decides encryption. `USRDIR/o`
+  (MGO2) is always encrypted. `USRDIR/mgs` (MGS4) is encrypted on the PSN releases (NPUB31633, NPEB02182,
+  NPJB00698) and plain on the Blu-ray discs (BLUS30109, BLES00246, BLJM67001–3, BLJM57001, BLUS30148, BLAS55004/5,
+  BLKS25002). BLJM60082 is the standalone MGO disc. Saves inside an encrypted area are always encrypted.
 
 ## Browser support
 

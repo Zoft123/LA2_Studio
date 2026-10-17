@@ -2,7 +2,7 @@
 // listing of LA2 files (loose and inside .dar archives), MGO2 decryption, and texture lookup.
 // Nothing is uploaded anywhere; files are read on demand.
 import { readDar, readQar, inflateDlz } from '../formats/archives.js';
-import { decrypt, checksumOk, keyForPath } from '../formats/mgo2crypt.js';
+import { decrypt, checksumOk, keyForPath, discEncryption } from '../formats/mgo2crypt.js';
 import { TexturePool, decodeDxt, parseTxn } from '../formats/textures.js';
 
 const dirname = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
@@ -103,16 +103,22 @@ export class Library {
   }
 
   // ---- decryption ------------------------------------------------------------------------------------------
-  /** Read a file, decrypting MGO2 stage files (key from the path, the settings, or detection in its folder). */
+  /** Read a file, decrypting MGO2 stage files (key from the path, the settings, or detection in its folder).
+   *  Inside a known disc / PSN title folder the disc ID decides: USRDIR/o is always encrypted, USRDIR/mgs only on
+   *  the PSN releases (see discEncryption); elsewhere encryption is detected from the file's checksum. */
   async read(path) {
     if (this.raw.has(path)) return this.raw.get(path);
     let data = await this.fs.read(path);
-    const key = this.settings.key || keyForPath(path) || this.keys.get(dirname(path));
-    if (key && data.length >= 0x18 && checksumOk(data, key)) { data = decrypt(data, key); this.encrypted.set(path, key); }
-    else if (!key && data.length >= 0x18 && ['.dar', '.qar', '.dlz', '.txn', '.la2'].includes(ext(path))) {
+    const disc = discEncryption(path);
+    const key = disc && !disc.encrypted ? null : this.settings.key || keyForPath(path) || this.keys.get(dirname(path));
+    if (disc && !disc.encrypted) { /* plain Blu-ray MGS4 data */ }
+    else if (key && data.length >= 0x18 && checksumOk(data, key)) { data = decrypt(data, key); this.encrypted.set(path, key); }
+    else if (!key && data.length >= 0x18 && (disc || ['.dar', '.qar', '.dlz', '.txn', '.la2'].includes(ext(path)))) {
       const k = await this.detectKey(dirname(path), data);
       if (k) { data = decrypt(data, k); this.encrypted.set(path, k); }
     }
+    // an already-decrypted copy inside an encrypted disc area is still encrypted when saved
+    if (disc && disc.encrypted && key && !this.encrypted.has(path)) this.encrypted.set(path, key);
     if (data.length < (32 << 20)) {
       this.raw.set(path, data);
       let total = 0;
@@ -131,7 +137,7 @@ export class Library {
     this.keys.set(dir, found);
     return found;
   }
-  keyFor(dir) { return this.settings.key || keyForPath(dir + '/x') || this.keys.get(dir) || null; }
+  keyFor(dir) { const d = discEncryption(dir + '/x'); if (d && !d.encrypted) return null; return this.settings.key || keyForPath(dir + '/x') || this.keys.get(dir) || null; }
 
   // ---- LA2 files ---------------------------------------------------------------------------------------------
   /** LA2 files of a folder: loose ones and those inside its .dar archives ({id, path, entry}). */
