@@ -249,6 +249,10 @@ export class Scene {
     }
     this.hidden = new Set();
     this.hiddenLayers = new Set();
+    // runtime composition (e.g. the Weapon Select screen): patch(set) overrides object states at draw time,
+    // attached scenes ({primitives()}) are drawn after this one
+    this.patch = null;
+    this.attached = [];
     this.initial = new Map();
     la.objects.forEach((o, i) => {
       const s = new State();
@@ -392,6 +396,11 @@ export class Scene {
         state.get(id).apply(la.packets(block, delta), la, t, at);
       }
     }
+    if (this.patch) {
+      const base = state;
+      state = new Map(base);
+      this.patch((id, fn) => { const st = base.get(id); if (st) { const c = st.clone(); fn(c); state.set(id, c); } });
+    }
     const prio = this._layers();
     const off = new Set([...la.layers.map(([, s], i) => (s & 1) ? i : -1).filter(i => i >= 0), ...this.hiddenLayers]);
     const out = [];
@@ -448,7 +457,9 @@ export class Scene {
     };
     for (const root of this.children.get(0) || []) walk(root, [1, 0, 0, 0, 1, 0], [1, 1, 1, 1]);
     out.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
-    return out.map(e => e[3]);
+    const prims = out.map(e => e[3]);
+    for (const a of this.attached) for (const p of a.primitives()) prims.push({ ...p, id: -1, ext: true });
+    return prims;
   }
 
   _uv(st, n) {

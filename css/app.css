@@ -111,3 +111,5 @@ progress { width: 100%; accent-color: var(--accent); }
   .stage { min-height: 50vh; }
   #openDirAlt { display: none; }
 }
+
+.warn { color: #e8a33d; margin: 6px 0; }

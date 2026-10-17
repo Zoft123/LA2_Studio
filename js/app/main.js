@@ -10,6 +10,7 @@ import { WebPWriter, APNGWriter, VideoWriter, VIDEO_FORMATS, videoFormats, encod
 import { hex, toHex, fromHex, latin1, Reader } from '../core/bin.js';
 import { replaceTexture } from './texedit.js';
 import { zipSync } from '../vendor/fflate.js';
+import { WeaponSelect, isWeaponSelect, defaultConfig, parseList, ROWS, CHARACTERS, ICON_NAMES, UNIQUE_OWNER } from './weaponselect.js';
 
 const $ = s => document.querySelector(s);
 const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -23,7 +24,12 @@ const S = {
   edits: new Map(),        // file id -> {bytes, undo: [], redo: []}
   texEdits: new Map(),     // dlz path -> edited DLD bytes
   playing: false, gen: 0,
+  ws: null,                // WeaponSelect composition when the open file is the Weapon Select screen
 };
+const wsCfg = (() => {
+  try { return { ...defaultConfig(), ...JSON.parse(localStorage.getItem('la2studio.weaponselect') || '{}') }; } catch (e) { return defaultConfig(); }
+})();
+const saveWsCfg = () => { try { localStorage.setItem('la2studio.weaponselect', JSON.stringify(wsCfg)); } catch (e) { /* storage unavailable */ } };
 const settings = { key: '', ...(() => { try { return JSON.parse(localStorage.getItem('la2studio.settings') || '{}'); } catch (e) { return {}; } })() };
 const saveSettings = () => { try { localStorage.setItem('la2studio.settings', JSON.stringify(settings)); } catch (e) { /* storage unavailable */ } };
 
@@ -160,6 +166,16 @@ async function openFile(f, keep = null) {
     if (g !== S.gen) return;
     S.file = f; S.bytes = bytes; S.la = la;
     S.scene = new Scene(la, S.lib);
+    S.ws = null;
+    if (isWeaponSelect(la)) {
+      $('#busy').textContent = 'loading weapon icons…';
+      S.ws = new WeaponSelect(S.lib, dirname(f.path), la);
+      await S.ws.load(wsCfg, S.texEdits);
+      if (g !== S.gen) return;
+      S.ws.apply(S.scene, wsCfg);
+    }
+    $('#tabs [data-t="weapons"]').hidden = !S.ws;
+    if (!S.ws && S.tab === 'weapons') S.tab = 'objects';
     if (!keep) { S.sel = null; S.hideObj = new Set(); S.hideLayer = new Set(); }
     S.scene.hidden = S.hideObj; S.scene.hiddenLayers = S.hideLayer; S.scene.showGuides = !!settings.guides;
     const pd = $('#action');
@@ -267,7 +283,7 @@ function hitTest(px, py) {
   };
   for (let i = (S.lastPrims || []).length - 1; i >= 0; i--) {
     const p = S.lastPrims[i];
-    if (p.kind === 'fan' && p.pts.length >= 3 && inside(p.pts, px, py)) return p.id;
+    if (p.kind === 'fan' && !p.ext && p.pts.length >= 3 && inside(p.pts, px, py)) return p.id;
   }
   return null;
 }
@@ -442,6 +458,7 @@ $('#exportAnim').onclick = async () => {
     // a private scene, timeline and GL context so the preview is untouched
     const scene = new Scene(S.la, S.lib);
     scene.hidden = S.hideObj; scene.hiddenLayers = S.hideLayer; scene.showGuides = !!settings.guides;
+    if (S.ws) S.ws.apply(scene, wsCfg);
     const tl = new Timeline(S.la, a, $('#pmode').value);
     scene.setTimeline(tl);
     const canvas = document.createElement('canvas');
@@ -537,7 +554,7 @@ function showTab() {
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === S.tab));
   const P = $('#panel');
   if (!S.la) { P.innerHTML = '<div class="pad dim">Open a file to inspect it.</div>'; return; }
-  ({ objects: tabObjects, props: tabProps, textures: tabTextures, tables: tabTables, keys: tabKeys, file: tabFile })[S.tab](P);
+  ({ objects: tabObjects, props: tabProps, textures: tabTextures, tables: tabTables, keys: tabKeys, file: tabFile, weapons: tabWeapons })[S.tab](P);
 }
 const OBJ_TYPE_LABELS = { 0: 'Nul (group)', 2: 'Box', 3: 'Sprt (sprite)', 4: 'RSprt (4-point sprite)', 5: 'Triangle', 6: 'Quad',
   7: 'Line', 8: 'LineStrip', 9: 'TriangleStrip', 10: 'String' };
@@ -560,6 +577,54 @@ function bindAdd(parentIndex) {
     const idx = await edit(m => m.addObject(typ, opts), 'added ' + OBJ_TYPES[typ]);
     if (idx !== undefined) { S.sel = idx; S.tab = 'props'; render(); showTab(); }
   };
+}
+
+// ---- Weapon Select composition ----------------------------------------------------------------------------------
+async function updateWeapons() {
+  if (!S.ws) return;
+  saveWsCfg();
+  busy(1, 'loading weapon icons…');
+  try { await S.ws.load(wsCfg, S.texEdits); S.ws.apply(S.scene, wsCfg); render(); }
+  finally { busy(-1); }
+  if (S.tab === 'weapons') showTab();
+}
+const weaponName = id => (ICON_NAMES[id] || '').replace(/^(wp|sp)icon_(b_)?/, '') || (id ? '#' + id : 'none');
+function tabWeapons(P) {
+  const rows = S.ws.rows(wsCfg);
+  const missing = [...S.ws.missing];
+  P.innerHTML = `<div class="pad">
+    <div class="dim small">The game fills this screen at runtime: each weapon is its own <code>wpicon_*.la2</code> layout,
+      placed in the row cells the way MGO2 does it. The lists use the stage script's format
+      (<code>[d7cbe5] -group N -wp_id &lt;id&gt; &lt;cost&gt; …</code>): paste a <code>-wp_id</code> list or a whole command.</div>
+    <div class="addrow"><label><input type="checkbox" id="wsOn" ${wsCfg.enabled ? 'checked' : ''}> show weapons</label>
+      <label>character <select id="wsChar">${CHARACTERS.map(([v, n]) => `<option value="${v}" ${wsCfg.character === v ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label></div>
+    <div class="addrow"><label><input type="checkbox" id="wsDp" ${wsCfg.drebin ? 'checked' : ''}> Drebin Points mode</label>
+      <label>budget <input id="wsBudget" value="${wsCfg.budget}" style="width:70px"></label>
+      <label>cost × <input id="wsMult" value="${wsCfg.mult}" style="width:50px"></label></div>
+    ${missing.length ? `<div class="warn small">icon layouts not found in this folder or its dl/p twin: ${missing.map(esc).join(', ')}</div>` : ''}
+  </div>` + ROWS.map((r, i) => {
+    const list = rows[i], at = wsCfg.scroll[i] || 0, max = Math.max(0, list.length - 6);
+    const shown = list.slice(at, at + 6).map(([id, c]) => `${esc(weaponName(id))}${UNIQUE_OWNER.has(id) ? '*' : ''} (${c})`).join(' · ');
+    return `<div class="section"><h3>${r.name} <span class="dim small">${list.length} weapons</span></h3>
+      <textarea data-wsl="${i}" rows="3" style="width:100%" spellcheck="false">${esc(wsCfg.lists[i])}</textarea>
+      <div class="addrow">scroll <input type="range" data-wss="${i}" min="0" max="${max}" value="${Math.min(at, max)}" ${max ? '' : 'disabled'}>
+        <span class="dim small">${at + 1}–${Math.min(list.length, at + 6)} of ${list.length}</span></div>
+      <div class="dim small">${shown || 'empty'}</div></div>`;
+  }).join('') + `<div class="pad"><button id="wsReset">Reset to the stage scripts' default lists</button>
+    <div class="dim small">* unique weapons: the game keeps them only for their character (Meryl, Johnny, …).</div></div>`;
+  const num = (v, d) => Number.isFinite(+v) ? +v : d;
+  $('#wsOn').onchange = e => { wsCfg.enabled = e.target.checked; updateWeapons(); };
+  $('#wsChar').onchange = e => { wsCfg.character = +e.target.value; wsCfg.scroll = [0, 0, 0]; updateWeapons(); };
+  $('#wsDp').onchange = e => { wsCfg.drebin = e.target.checked; updateWeapons(); };
+  $('#wsBudget').onchange = e => { wsCfg.budget = num(e.target.value, 0); updateWeapons(); };
+  $('#wsMult').onchange = e => { wsCfg.mult = num(e.target.value, 250); updateWeapons(); };
+  P.querySelectorAll('[data-wsl]').forEach(t => t.onchange = () => {
+    const i = +t.dataset.wsl;
+    if (!parseList(t.value).length && t.value.trim()) { msg('No "<id> <cost>" pairs found in that list', true); return; }
+    wsCfg.lists[i] = t.value.trim(); wsCfg.scroll[i] = 0; updateWeapons();
+  });
+  P.querySelectorAll('[data-wss]').forEach(r => r.oninput = () => { wsCfg.scroll[+r.dataset.wss] = +r.value; updateWeapons(); });
+  $('#wsReset').onclick = () => { Object.assign(wsCfg, defaultConfig(), { budget: wsCfg.budget, mult: wsCfg.mult }); updateWeapons(); };
 }
 
 function tabObjects(P) {

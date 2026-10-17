@@ -151,6 +151,45 @@ export class Library {
     }
     return out;
   }
+  /** The paired o/stage/<name> <-> o/dl/p/stage/<name> folder of a folder, or null. */
+  pairedDir(d) {
+    const parts = d.split('/'), i = parts.lastIndexOf('stage');
+    if (i < 0) return null;
+    const other = parts.slice(i - 2, i).join('/') === 'dl/p'
+      ? [...parts.slice(0, i - 2), ...parts.slice(i)].join('/') : [...parts.slice(0, i), 'dl', 'p', ...parts.slice(i)].join('/');
+    return this.dirs.has(other) ? other : null;
+  }
+  /** Find an LA2 by file name near a folder, the way the game resolves resident files: the dl/p patch folder
+   *  first, newer resident_NNNNNN.dar archives before older ones, then the stage folder and the folders above. */
+  async findLa2(name, dir) {
+    const want = name.toLowerCase();
+    this.la2Names = this.la2Names || new Map();         // .dar path -> Map(lower-case entry name -> entry name)
+    const dirs = [];
+    const add = d => { if (d && this.dirs.has(d) && !dirs.includes(d)) dirs.push(d); };
+    for (let d = dir, k = 0; d && k < 5; k++) {
+      add(this.pairedDir(d)); add(d);
+      if (basename(dirname(d)) === 'stage' || !d.includes('/')) break;
+      d = dirname(d);
+    }
+    dirs.sort((a, b) => b.includes('/dl/p/') - a.includes('/dl/p/'));
+    const rank = p => { const m = /_(\d+)\.dar$/i.exec(p); return m ? +m[1] : basename(p).toLowerCase() === 'resident.dar' ? 0 : -1; };
+    for (const d of dirs) {
+      const files = this.dirs.get(d).files;
+      const loose = files.find(p => basename(p).toLowerCase() === want);
+      if (loose) return { id: loose, path: loose, entry: null };
+      for (const p of files.filter(p => ext(p) === '.dar').sort((a, b) => rank(b) - rank(a))) {
+        let names = this.la2Names.get(p);
+        if (!names) {
+          names = new Map();
+          try { for (const e of readDar(await this.read(p)).entries) names.set(e.name.toLowerCase(), e.name); } catch (e) { /* not a DAR */ }
+          this.la2Names.set(p, names);
+        }
+        const e = names.get(want);
+        if (e) return { id: p + '::' + e, path: p, entry: e };
+      }
+    }
+    return null;
+  }
   async la2Bytes(f) {
     const data = await this.read(f.path);
     if (!f.entry) return data;
@@ -228,8 +267,14 @@ export class Library {
     const qar = files.find(p => basename(p) === base + '.qar'), txn = files.find(p => basename(p) === base + '.txn');
     if (qar) for (const e of readQar(await this.read(qar))) { if (e.name.endsWith('.txn')) try { pool.addTxn(e.data); } catch (x) {} }
     else if (txn) pool.addTxn(await this.read(txn));
+    // MGO2 DLC folders (o/dl/p/stage/<name>): .dci image remaps, and the base folder's DLZs underneath, since a
+    // patched TXN keeps reading its unchanged images from the base stage
+    for (const p of files.filter(p => ext(p) === '.dci' && basename(p).startsWith(base))) {
+      try { pool.addDci(await this.read(p)); } catch (x) { /* not a DCI */ }
+    }
+    const under = dir.includes('/dl/p/') && this.pairedDir(dir) ? this.dlzFor(this.pairedDir(dir) + '|' + base) : [];
     pool.bytes = 0;
-    for (const p of this.dlzFor(loc)) {
+    for (const p of [...under, ...this.dlzFor(loc)]) {
       const dld = overrides.get(p) || inflateDlz(await this.read(p));
       pool.addDld(dld);
       pool.bytes += dld.length;

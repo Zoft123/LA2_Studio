@@ -73,7 +73,27 @@ export function parseDld(d) {
 
 /** One stage's (or folder's) textures: TXN infos and DLD data, by texture hash. */
 export class TexturePool {
-  constructor() { this.infos = new Map(); this.data = new Map(); this.owners = null; }
+  constructor() { this.infos = new Map(); this.data = new Map(); this.owners = null; this.remap = new Map(); }
+  /** MGO2 DLC .dci: per TXN (TRI hash) and mip priority, (DLD image number, TXN image number) pairs. A patched TXN's
+   *  images are read from the indexed DLZs (resident_d_013000.dlz, …) under these numbers, so a patch only ships the
+   *  images that changed. Header {u32 hash, u32 0x1000, u32 count, u32 0}; record {u32 TRI, u32 table offset,
+   *  u16 priority, u16 pairs}; table: pairs x {u16 dld image, u16 txn image (0xFFFF = unused)}. */
+  addDci(bytes) {
+    const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const le = v.getUint32(4, false) !== 0x1000;
+    if (bytes.length < 16 || v.getUint32(4, le) !== 0x1000) return;
+    const n = v.getUint32(8, le);
+    for (let i = 0; i < n && 16 + 12 * i + 12 <= bytes.length; i++) {
+      const o = 16 + 12 * i, tri = v.getUint32(o, le), at = v.getUint32(o + 4, le), prio = v.getUint16(o + 8, le), cnt = v.getUint16(o + 10, le);
+      if (at === 1 || at + 4 * cnt > bytes.length) continue;
+      const m = new Map();
+      for (let k = 0; k < cnt; k++) {
+        const dld = v.getUint16(at + 4 * k, le), img = v.getUint16(at + 4 * k + 2, le);
+        if (img !== 0xFFFF) m.set(img, dld);
+      }
+      this.remap.set(tri + ':' + prio, m);
+    }
+  }
   addTxn(bytes) {
     for (const info of parseTxn(bytes)) {
       if (info.img && info.img.embedded) info.txn = bytes;
@@ -100,8 +120,13 @@ export class TexturePool {
     }
     const cands = [...(info.imgIdx !== null ? [info.imgIdx] : []), info.index, ...(this.owners.get(info.tri + ':' + info.imgOff) || [])];
     for (const idx of cands) {
+      // a TXN with .dci remaps only uses remapped numbers (its raw numbers name other images in the indexed DLZs)
+      const remapped = [0, 1, 2, 3].some(p => this.remap.has(info.tri + ':' + p));
       for (const prio of [0, 3, 1, 2]) {
-        const d = this.data.get(info.tri + ':' + idx + ':' + prio);
+        const rm = this.remap.get(info.tri + ':' + prio);
+        if (remapped && !(rm && rm.has(idx))) continue;
+        const dld = rm ? rm.get(idx) : idx;
+        const d = this.data.get(info.tri + ':' + dld + ':' + prio);
         if (d && d.length >= need) return { w, h: ih, fourcc, data: d.subarray(0, need) };
       }
     }

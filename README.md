@@ -40,6 +40,14 @@ data is included in this repository.
   composite screens play as a whole; fired commands are listed and clickable.
 - Incremental playback with snapshots: even MGS4 layouts with millions of keyframes seek instantly.
 
+### Weapon Select preview (MGO2 / MGA)
+- Opening `second_weponselect2.la2` composes the screen the way the game does at runtime: each weapon's own
+  `wpicon_*.la2` layout is loaded from the stage archives and placed in the primary / secondary / support rows, tinted
+  like the game, with the screen shown as it looks once opened.
+- The **Weapons** tab takes the stage script's lists (`[d7cbe5] -group N -wp_id <id> <cost> …`), scrolls each row,
+  picks the character (unique weapons only appear for their owner, as in the game) and toggles Drebin Points mode
+  (empty first slot, cost labels, over-budget weapons faded). Exports include the weapons.
+
 ### Editing
 - Click an object in the preview (or the object tree) to select it; drag it to move, or nudge with
   Shift + arrow keys.
@@ -133,6 +141,9 @@ download the edited files, then copy them into your game folder (keep a backup o
   `convert/archive/Dar` layout, for example) uses the folders above it up to its stage folder, and MGO2's
   `o/stage/<name>` and `o/dl/p/stage/<name>` folders are paired automatically. If something is still missing,
   *Search everything* in the Textures tab indexes every archive in the opened folder.
+- **MGO2 DLC textures** follow the game's own resolution: a patch folder's `.dci` index remaps a patched TXN's
+  image numbers into the indexed DLZs (`resident_nodld_013000.dlz`, …), and its unchanged images still come from the
+  base stage folder's DLZs.
 - **MGO2 decryption** uses the stage folder name (`stage/<name>`) taken from the path; for copies kept elsewhere it
   tries the folder names it can see, and **Settings** lets you set the key by hand.
 
