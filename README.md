@@ -35,7 +35,9 @@ data is included in this repository.
 - Text laid out like the game: font-cell glyph sizes, multi-line strings, left / right / centre / justified.
 - Mask / guide shapes in MGS4's Flash-converted layouts, which the game never draws, are hidden (they can be shown
   from Settings).
-- Real-time playback at 15–180 fps with loop, once and ping-pong modes, frame stepping and scrubbing.
+- Playback that follows the game's engine (libla): 300 ticks per second, updates in game-frame steps, actions started
+  by commands on the same update grid, starts of already-playing actions ignored, layer commands with the engine's
+  priority rules. Speed 0.1×–2×, loop, once and ping-pong modes, tick stepping and scrubbing.
 - **Also play:** run other actions alongside the selected one, looping, for screens the game builds from several
   actions at once. MGO2's lobby rule screen (`rule_anime.la2`) gets the game's own pair by default: the soldiers'
   run cycle and trails (#2b7872) and the goals (#925b6e) keep looping under every rule's action, which only moves
@@ -86,7 +88,8 @@ data is included in this repository.
   composited over anything. Untick *Transparent* or pick a colour for a solid background; video has no alpha and
   always uses the picked colour.
 - **Freeze last frame** plays the action once and stops on its final frame, in the preview and in exports (animated
-  images then play once instead of looping). Exports always include the final frame, at every fps.
+  images then play once instead of looping). Exports always include the final frame, at every speed; at 1× they sample
+  exactly the game's 60 fps frames.
 - Single frames as PNG (without the selection outline).
 
 Which to choose: animated layouts that change across the whole screen every frame (fades, scrolling, video-like
@@ -133,7 +136,7 @@ python3 -m http.server 8000
 | Area | What it does |
 |---|---|
 | **Folders / Files** | Folders that contain LA2 data, then the layouts in the selected folder (loose files and `.dar` entries). Tick *subfolders* to include everything below. |
-| **Toolbar** | Action, also play (extra looping actions), play, frame, play mode, freeze last frame, fps, zoom (*fit* scales to the window), transparent / solid background colour, drag-to-move. |
+| **Toolbar** | Action, also play (extra looping actions), play, frame, play mode, freeze last frame, speed (1× = the game's 300 ticks per second), zoom (*fit* scales to the window), transparent / solid background colour, drag-to-move. |
 | **Crop** | Enable a custom viewport, enter X / Y / W / H, select an area by dragging, or reset to the full layout. Applies to the live view and exports. |
 | **Export / Save** | Animation export, frame PNG, undo / redo / revert, save `.la2`, `.dar` and edited textures. |
 | **Objects** | The object tree. Untick to hide in the preview only; add new objects at the root. |

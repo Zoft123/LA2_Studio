@@ -37,8 +37,12 @@ test('turning freeze off restores the selected timeline behavior', () => {
   const timeline = new FixtureTimeline(layout, 0, playbackMode('auto', false));
   const scene = new Scene(layout, null);
   scene.setTimeline(timeline);
-  scene.seek(timeline.length());
   assert.equal(timeline.runs[0].loop, true);
+  // libla restarts a loop in the update after the one that reached its end: 11 ticks round up to 15 at 5 per update
+  assert.equal(timeline.period(0), 15);
+  scene.seek(15);
+  assert.equal(scene.state.get(0).xy[0][0][0], 160);
+  scene.seek(20);
   assert.equal(scene.state.get(0).xy[0][0][0], 0);
 });
 
@@ -225,4 +229,47 @@ test('WebM stores terminal frame durations and references for delta frames', () 
     const bytes = g.find(e => e.id === 0xfb).data;
     return new DataView(bytes.buffer, bytes.byteOffset, bytes.length).getInt32(0);
   }), [-16, -17, -8]);
+});
+
+// Two actions: the root starts action 1 at ticks 7 and 12 and moves its layer at 3; action 1 lasts 20 ticks.
+const cmdTrack = (cmds, n = 3) => ({ n, type: Uint8Array.of(4, 4, 0), dur: Int32Array.of(10, 10, 0), block: Int32Array.of(-1, -1, -1),
+  delta: Int32Array.of(0, 0, 0), cmds });
+const START = 0x506131, FRONT = 0x280588, BACK = 0x3792ad, OFF = 0xf50362;
+class CommandTimeline extends Timeline {
+  tracks(i) {
+    return i === 0
+      ? [{ ...cmdTrack(new Map([[0, [[FRONT, 0]]], [1, [[START, 0xaa], [START, 0xaa]]]])), dur: Int32Array.of(7, 5, 0) }]
+      : [cmdTrack(new Map())];
+  }
+}
+const cmdLayout = {
+  objects: [{ id: 0, parent: 65535, layer: 0 }, { id: 1, parent: 65535, layer: 1 }], nblocks: 0,
+  layers: [[0x11, 0], [0x22, 0], [0x33, 0]], named: new Map([[0xaa, 1]]),
+  actions: [{ flags: 0, tracks: [{ object: 0 }] }, { flags: 0, tracks: [{ object: 1 }] }],
+};
+
+test('commands fire on the update grid, start actions one step earlier and do not restart a running one', () => {
+  const tl = new CommandTimeline(cmdLayout, 0, 'once');
+  // the key at tick 7 is reached by the update at 10; the started action runs in that update, so it starts at 5
+  assert.deepEqual(tl.runs.slice(1).map(r => [r.action, r.start]), [[1, 5]]);
+  const starts = tl.events.filter(e => e.name === 'StartAction');
+  assert.deepEqual(starts.map(e => [e.frame, !!e.ignored]), [[10, false], [10, true]]);
+  assert.equal(tl.events.find(e => e.name === 'FrontLayer').frame, 5);   // a key at tick 0 runs in the first update
+});
+
+test('layer commands follow libla priorities, including the no-shift case', () => {
+  const ops = layerOps => {
+    const scene = new Scene({ ...cmdLayout, objects: cmdLayout.objects, packets: () => [] }, null);
+    scene.timeline = { layerOps }; scene.frame = 100;
+    return scene._layers();
+  };
+  // FrontLayer with no target: the object's layer goes to the front, the others shift back
+  assert.deepEqual(ops([{ frame: 1, op: 'FrontLayer', object: 0, layer: 0 }]).prio, [2, 0, 1]);
+  // BackLayer behind layer #33 from below it: layers between shift, the moved layer sits just behind
+  assert.deepEqual(ops([{ frame: 1, op: 'BackLayer', object: 0, layer: 0x33 }]).prio, [1, 0, 2]);
+  // a layer already in front of the target only takes the neighbouring priority (libla shifts nothing)
+  assert.deepEqual(ops([{ frame: 1, op: 'FrontLayer', object: 1, layer: 0x11 }]).prio, [0, 1, 2]);
+  assert.deepEqual(ops([{ frame: 1, op: 'OffLayer', object: 1, layer: 0 }]).off, [false, true, false]);
+  assert.deepEqual(ops([{ frame: 1, op: 'OffLayer', object: 1, layer: 0 }, { frame: 2, op: 'OnLayer', object: 1, layer: 0 }]).off,
+    [false, false, false]);
 });

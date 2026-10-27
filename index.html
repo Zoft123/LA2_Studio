@@ -41,7 +41,7 @@
       <span id="flabel" class="dim mono">0</span>
       <label class="dim" title="auto = the action's loop flag">Play <select id="pmode"><option value="auto">auto</option><option value="loop">loop</option><option value="once">once</option><option value="pingpong">ping-pong</option></select></label>
       <label class="dim" title="Freeze / stop on the very last frame of the track for playback and export"><input type="checkbox" id="freezeEnd"> Freeze last frame</label>
-      <label class="dim">fps <select id="fps"><option>15</option><option selected>30</option><option>60</option><option>120</option><option>180</option></select></label>
+      <label class="dim" title="Ticks per second. LA2 time is in ticks of 1/300 s; the game plays 300 per second (5 per 60 fps frame)">Speed <select id="fps"><option value="30">0.1×</option><option value="75">0.25×</option><option value="150">0.5×</option><option value="300" selected>1× (game)</option><option value="600">2×</option></select></label>
       <label class="dim">Zoom <select id="scale"><option value="fit" selected>fit</option><option>0.25</option><option>0.5</option><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
       <label class="dim"><input type="checkbox" id="bgTransparent" checked> Transparent</label>
       <label class="dim" id="bgColLabel" title="Background colour">bg <input id="bg" type="color" value="#202830" aria-label="Background colour"></label>

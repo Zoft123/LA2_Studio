@@ -11,7 +11,7 @@ import { parsePacket } from '../formats/la2.js';
 import { strcode, latin1 } from '../core/bin.js';
 
 export const COMMANDS = new Map(['StartAction', 'StartLoopAction', 'StopAction', 'FrontLayer', 'BackLayer',
-  'SwapLayer', 'Name'].map(n => [strcode(n), n]));
+  'SwapLayer', 'OffLayer', 'Name'].map(n => [strcode(n), n]));
 
 const lerp = (a, b, t) => a + (b - a) * t;
 
@@ -154,11 +154,17 @@ export function trackLength(t) {
 }
 
 // ---- timeline: which actions run when (commands), layer changes -------------------------------------------------
+/** libla's clock: the game advances round(0.3 × elapsed ms) ticks per update (MGS4 PC sub_7FF77FD4ECF0; MGO2's
+ *  lobby passes speed 1.0), so durations are 1/300 s and a 60 fps frame steps 5 ticks. */
+export const TICKS_PER_SECOND = 300, GAME_STEP = 5;
+const LAYER_ON = 0xF286B2;                 // name unknown: clears the object's layer "off" bit (OffLayer sets it)
+
 export class Timeline {
   /** mode for the first action: 'auto' (its loop flag), 'loop', 'once', 'pingpong'. `also`: actions that play
-   *  alongside it, looping from frame 0, for screens the game composes from several actions at once. */
-  constructor(la, root, mode = 'auto', { also = [], horizon = 20000 } = {}) {
-    this.la = la; this.root = root; this.mode = mode; this.horizon = horizon;
+   *  alongside it, looping from tick 0, for screens the game composes from several actions at once. `step`: ticks
+   *  per game update; libla only ever evaluates actions at those steps. */
+  constructor(la, root, mode = 'auto', { also = [], horizon = 20000, step = GAME_STEP } = {}) {
+    this.la = la; this.root = root; this.mode = mode; this.horizon = horizon; this.step = step;
     this.also = also.filter(a => a !== root && la.actions[a]);
     this.compiled = new Map();
     this.len = la.actions.map((_, i) => Math.max(0, ...this.tracks(i).map(trackLength)));
@@ -171,6 +177,8 @@ export class Timeline {
     return this.compiled.get(i);
   }
   loops(i) { return !!this.la.actions[i].flags; }
+  /** Updates are `step` ticks apart: an action ends (or loops) in the first update that reaches its length. */
+  period(i) { return Math.max(1, Math.ceil(this.len[i] / this.step)) * this.step; }
   _commands(i) {
     const out = [];
     this.tracks(i).forEach((tk, t) => {
@@ -184,52 +192,66 @@ export class Timeline {
     });
     return out.sort((a, b) => a[0] - b[0]);
   }
+  /** Which actions run when, following libla's update (MGS4 PC sub_7FF77FA4B3E0 / sub_7FF77FA4B650): playing
+   *  actions form a list in start order and each update advances them in turn. A command fires in the first update
+   *  that reaches its key; an action it starts is appended and runs in that same update, so it starts one step
+   *  earlier on the update grid. Starting an action that is still in the list does nothing; stopping one that
+   *  this update has not reached yet drops it before it moves. */
   _schedule() {
+    const K = this.step;
     const rootLoop = { auto: this.loops(this.root), loop: true, once: false, pingpong: true }[this.mode] ?? false;
     this.runs = [{ action: this.root, start: 0, stop: null, loop: rootLoop, root: true },
       ...this.also.map(action => ({ action, start: 0, stop: null, loop: true }))];
     this.events = []; this.layerOps = [];
     const heap = [];
     const addRun = run => {
-      const cmds = this._commands(run.action), n = this.len[run.action];
-      const reps = run.loop && n > 0 ? Math.floor(this.horizon / n) + 1 : 1;
+      const cmds = this._commands(run.action), P = this.period(run.action);
+      const reps = run.loop ? Math.floor(this.horizon / P) + 1 : 1;
       for (let r = 0; r < reps; r++) {
         for (const [t, c, arg, obj] of cmds) {
-          const g = run.start + r * n + t;
+          const g = run.start + r * P + Math.max(1, Math.ceil(t / K)) * K;
           if (g > this.horizon) break;
-          heap.push([g, heap.length, run, c, arg, obj]);
+          heap.push([g, this.runs.indexOf(run), heap.length, run, c, arg, obj]);
         }
-        if (run.start + r * n > this.horizon) break;
+        if (run.start + r * P > this.horizon) break;
       }
-      heap.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      heap.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    };
+    // still in libla's list during update g, as seen by the run at index `by` (earlier runs have moved already)
+    const listed = (r, g, by) => {
+      if (r.start >= g) return false;
+      const end = r.stop ?? (r.loop ? Infinity : r.start + this.period(r.action));
+      return g < end || (g === end && r.stop === null && this.runs.indexOf(r) > by);
     };
     for (const run of [...this.runs]) addRun(run);
     while (heap.length) {
-      const [g, , run, c, arg, obj] = heap.shift();
-      if (run.stop !== null && g >= run.stop) continue;
-      const name = COMMANDS.get(c) || '#' + c.toString(16).padStart(6, '0');
-      this.events.push({ frame: g, name, arg, action: run.action });
+      const [g, by, , run, c, arg, obj] = heap.shift();
+      if (run.stop !== null && g > run.stop) continue;
+      const name = c === LAYER_ON ? '#f286b2 (layer on)' : COMMANDS.get(c) || '#' + c.toString(16).padStart(6, '0');
       const target = this.la.named.get(arg);
+      const event = { frame: g, name, arg, action: run.action };
+      this.events.push(event);
       if ((name === 'StartAction' || name === 'StartLoopAction') && target !== undefined) {
-        for (const r of this.runs) if (r.action === target && r.stop === null && !r.root) r.stop = g;
-        const nr = { action: target, start: g, stop: null, loop: name === 'StartLoopAction' || this.loops(target) };
+        if (this.runs.some(r => r.action === target && listed(r, g, by))) { event.ignored = true; continue; }
+        const nr = { action: target, start: g - K, stop: null, loop: name === 'StartLoopAction' || this.loops(target) };
         this.runs.push(nr);
         addRun(nr);
       } else if (name === 'StopAction' && target !== undefined) {
-        for (const r of this.runs) if (r.action === target && r.stop === null && r.start <= g) r.stop = g;
-      } else if (name === 'FrontLayer' || name === 'BackLayer' || name === 'SwapLayer') {
-        this.layerOps.push({ frame: g, op: name, object: obj, layer: arg });
+        const r = this.runs.find(r => r.action === target && listed(r, g, by));
+        if (r) r.stop = this.runs.indexOf(r) < by ? g : g - K;
+      } else if (['FrontLayer', 'BackLayer', 'SwapLayer', 'OffLayer'].includes(name) || c === LAYER_ON) {
+        this.layerOps.push({ frame: g, op: c === LAYER_ON ? 'OnLayer' : name, object: obj, layer: arg });
       }
       if (this.runs.length > 500) break;
     }
   }
-  /** Frames to show: the first action, or until the last non-looping action it starts has ended. */
+  /** Ticks to show: the first action, or until the last non-looping action it starts has ended. */
   length() {
     let end = this.len[this.root] * (this.mode === 'pingpong' ? 2 : 1);
     for (const r of this.runs.slice(1)) if (!r.loop) end = Math.max(end, Math.min(r.stop ?? 1e9, r.start + this.len[r.action]));
     return Math.min(end, this.horizon);
   }
-  /** Ping-pong plays the first action forward then backward: the frame actually shown. */
+  /** Ping-pong plays the first action forward then backward: the tick actually shown. */
   mapFrame(f) {
     const n = this.len[this.root];
     if (this.mode !== 'pingpong' || !n) return f;
@@ -322,17 +344,18 @@ export class Scene {
       if (r.start > f) continue;
       const tl = this.timeline, n = tl.len[r.action], tracks = tl.tracks(r.action);
       let local = (r.stop !== null ? Math.min(f, r.stop) : f) - r.start;
-      // looping: each completed pass restarts the keys from the state the last pass left
+      // looping: once every track has finished, the update that got there restarts the keys at tick 0 from the
+      // state the pass left, so a pass lasts `period` ticks and its last update shows the end state
       if (r.loop && n > 0) {
-        const pass = Math.floor(local / n);
+        const P = tl.period(r.action), pass = local > 0 ? Math.floor((local - 1) / P) : 0;
         while (c.loops < pass) {
-          this._runTracks(c, tracks, n, r.start + c.loops * n, true);
+          this._runTracks(c, tracks, n, r.start + c.loops * P, true);
           c.loops++;
           c.tracks.forEach(t => { t.k = 0; t.time = 0; t.done = false; });
         }
-        local -= pass * n;
+        local -= pass * P;
       }
-      this._runTracks(c, tracks, local, r.start + c.loops * n, false);
+      this._runTracks(c, tracks, local, r.start + c.loops * (r.loop ? tl.period(r.action) : n), false);
     }
     this.at = f;
   }
@@ -362,27 +385,34 @@ export class Scene {
       if (!finish) cur.done = true;
     });
   }
-  /** Layer priorities after the timeline's layer commands up to the current frame. */
+  /** Layer priorities and "off" bits after the timeline's layer commands up to the current tick, as libla changes
+   *  them (MGS4 PC sub_7FF77FA4A580 / A700 / AAF0 / A6A0 / A6D0): Front/BackLayer place the object's layer just in
+   *  front of / behind the named layer (or the frontmost / backmost one), shifting the layers between; a layer already
+   *  on that side only takes the neighbouring priority. SwapLayer exchanges two priorities. */
   _layers() {
-    const prio = new Map(this.la.layers.map((_, i) => [i, i]));
-    if (!this.timeline) return prio;
-    let order = [...prio.keys()];
-    const byHash = new Map(this.la.layers.map(([h], i) => [h, i]));
-    for (const op of this.timeline.layerOps) {
-      if (op.frame > this.frame) break;
-      const o = this.objs.get(op.object);
-      if (!o || !order.includes(o.layer)) continue;
-      const L = o.layer, other = byHash.get(op.layer);
-      if (op.op === 'SwapLayer' && other !== undefined) {
-        const a = order.indexOf(L), b = order.indexOf(other);
-        [order[a], order[b]] = [order[b], order[a]];
-      } else if (op.op === 'FrontLayer' || op.op === 'BackLayer') {
-        order = order.filter(x => x !== L);
-        if (other === undefined || other === L) order = op.op === 'FrontLayer' ? [...order, L] : [L, ...order];
-        else order.splice(order.indexOf(other) + (op.op === 'FrontLayer' ? 1 : 0), 0, L);
+    const L = this.la.layers, prio = L.map((_, i) => i), off = L.map(([, s]) => !!(s & 1));
+    if (this.timeline) {
+      const byHash = new Map(L.map(([h], i) => [h, i]));
+      for (const op of this.timeline.layerOps) {
+        if (op.frame > this.frame) break;
+        const o = this.objs.get(op.object), a = o ? o.layer : -1;
+        if (!L[a]) continue;
+        if (op.op === 'OffLayer' || op.op === 'OnLayer') { off[a] = op.op === 'OffLayer'; continue; }
+        let b = op.layer ? byHash.get(op.layer) : undefined;
+        if (op.layer && b === undefined) continue;
+        if (op.op === 'SwapLayer') { if (b !== undefined) [prio[a], prio[b]] = [prio[b], prio[a]]; continue; }
+        const front = op.op === 'FrontLayer';
+        if (b === undefined) b = prio.reduce((m, p, i) => m < 0 || (front ? prio[m] < p : prio[m] > p) ? i : m, -1);
+        if (b < 0 || L[a][0] === L[b][0]) continue;
+        const pa = prio[a], pb = prio[b];
+        if (pa >= pb) prio[a] = front ? pb + 1 : pb;
+        else {
+          prio.forEach((p, i) => { if (p > pa && (front ? p <= pb : p < pb)) prio[i] = p - 1; });
+          prio[a] = front ? pb : pb - 1;
+        }
       }
     }
-    return new Map(order.map((l, i) => [l, i]));
+    return { prio, off };
   }
 
   // ---- draw list ---------------------------------------------------------------------------------------------
@@ -406,10 +436,10 @@ export class Scene {
       state = new Map(base);
       this.patch((id, fn) => { const st = base.get(id); if (st) { const c = st.clone(); fn(c); state.set(id, c); } });
     }
-    const prio = this._layers();
-    const off = new Set([...la.layers.map(([, s], i) => (s & 1) ? i : -1).filter(i => i >= 0), ...this.hiddenLayers]);
+    const { prio, off: layerOff } = this._layers();
+    const off = new Set([...layerOff.map((o, i) => o ? i : -1).filter(i => i >= 0), ...this.hiddenLayers]);
     const out = [];
-    const emit = (o, prim) => out.push([prio.get(o.layer) ?? 0, this.order.get(o.id), out.length, prim]);
+    const emit = (o, prim) => out.push([prio[o.layer] ?? 0, this.order.get(o.id), out.length, prim]);
     const walk = (id, M, col) => {
       const o = this.objs.get(id), st = state.get(id);
       if (!o || !st || !st.visible || this.hidden.has(id) || off.has(o.layer)) return;

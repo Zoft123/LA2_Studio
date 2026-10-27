@@ -103,7 +103,7 @@ type 0. Blocks `0 … objects − 1` are the objects' initial states; later bloc
 | 17 | typing_mode | `s16`: 0 off, 1 typing, 3 first colour, 4 end colour |
 | 18 | font | `s16` font id (1-based) |
 | 19 | string_pos_mode | `s16` alignment |
-| 20 / 21 | typing_speed / typing_color_speed | `s16` frames |
+| 20 / 21 | typing_speed / typing_color_speed | `s16` ticks |
 | 22 / 23 | typing_first_color / typing_end_color | `u32` RGBA |
 | 24 | string_init_data | `s16 space, s16 mode (0 left, 1 right, 2 centre, 3 justify), s16 font id` |
 | 25 | typing_init_data | `s16 typeSpeed, s16 colorSpeed, u32 firstColor, u32 endColor` |
@@ -126,23 +126,45 @@ key `{u16 type, u16 size, data}`.
 | 1 | commands | `u32 n; n × (u32 command hash, u32 argument)` | see below |
 | 2 | call | `u32` action hash | run another action's first track inline (up to its return) |
 | 3 | return | — | end of a called track |
-| 4 | wait | `u32` frames | hold |
+| 4 | wait | `u32` ticks | hold |
 | 7 | set | `u32` status-block file offset | apply a block at once |
-| 8 | morph | `u32 frames, u32` status-block offset | interpolate to a block over n frames |
+| 8 | morph | `u32 ticks, u32` status-block offset | interpolate to a block over n ticks |
 
-Morph progress is `(now − start) / frames`, clamped to 0…1, interpolating positions, sizes, colours, scale and
-rotation. Status offsets may point inside a block (the packets from that point apply).
+Morph progress is `(now − start) / ticks`, clamped to 0…1, interpolating positions, sizes, colours, scale and
+rotation from the values the object had when the key began (rounded to whole units); show / hide apply when it reaches
+1. Status offsets may point inside a block (the packets from that point apply).
+
+### Time and playback (libla)
+
+Durations are **ticks of 1/300 s**. Each game update advances every playing action by `round(speed × K)` ticks, where
+K is the game's elapsed time (`round(0.3 × ms)`, so 5 at 60 fps) and the speed is chosen by the code that drives the
+layout (1.0 for MGO2's lobby rule screen). Actions are only ever evaluated at these steps.
+
+Playing actions form a list in start order; each update advances them in turn and runs every key it reaches. Loading
+a layout starts nothing: the game's code starts actions (by hash, optionally looping, reversed, or on another object)
+or queues them to start when another ends, and commands inside the file start more. A screen is therefore often
+several actions at once that only the game's code combines (MGO2's lobby rule screen keeps #2b7872, the soldiers' run
+cycle, and #925b6e, the goals, looping under every rule's action).
+
+- Starting an action that is already playing does nothing.
+- An action started by a command is appended and advanced in the same update, so it begins one step before that
+  update on the game's grid.
+- An action ends in the first update in which every track has reached its end; it is then removed (non-looping) or
+  restarts at tick 0 in the next update (looping: the action header's flag, or a loop start). A pass therefore lasts
+  `ceil(length / step) × step` ticks.
 
 ### Commands
 
 | Command | Argument | Effect |
 |---|---|---|
-| StartAction | action hash | start an action alongside the current one |
+| StartAction | action hash | start an action alongside the current one (ignored while it is playing) |
 | StartLoopAction | action hash | start an action, looping |
 | StopAction | action hash | stop an action |
-| FrontLayer / BackLayer | layer hash or 0 | move the track object's layer in front of / behind another layer (or to the front / back) |
+| FrontLayer / BackLayer | layer hash or 0 | move the track object's layer just in front of / behind another layer (or the frontmost / backmost); the layers between shift by one. A layer already on that side only takes the neighbouring priority. |
 | SwapLayer | layer hash | swap two layers' priorities |
-| Name | — | label, ignored |
+| OffLayer | — | turn the track object's layer off |
+| #f286b2 | — | turn it back on (name unknown) |
+| Name, #173f76 | — | ignored |
 
 Any other command hash is passed to the game as a signal.
 
@@ -155,8 +177,8 @@ Any other command hash is passed to the game as a signal.
 5. Text: glyphs are drawn at their font-cell size (1/16 px); x advances by each glyph's width; a line ends at
    `\n`, `\r` or their two-character escapes and moves down by the newline glyph's height; each line is aligned by
    the string's mode within its box width, with `space` added between letters (justify spreads them).
-6. Typing: in mode 1 one letter appears every *typeSpeed* frames after the mode was set, each fading from the first
-   to the end colour over *colorSpeed* frames.
+6. Typing: in mode 1 one letter appears every *typeSpeed* ticks after the mode was set, each fading from the first
+   to the end colour over *colorSpeed* ticks.
 
 ## Tables
 

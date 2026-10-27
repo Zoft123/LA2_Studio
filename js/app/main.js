@@ -4,7 +4,7 @@ import { LA2, OBJ_TYPES, PACKETS, SECTION_NAMES, OBJ_DEF_NAMES, statusFields, pa
 import { Model } from '../formats/model.js';
 import { readDar, writeDar } from '../formats/archives.js';
 import { encrypt } from '../formats/mgo2crypt.js';
-import { Scene, Timeline, COMMANDS } from '../engine/scene.js';
+import { Scene, Timeline, COMMANDS, TICKS_PER_SECOND } from '../engine/scene.js';
 import { Renderer } from '../engine/gl.js';
 import { CropControls } from './crop.js';
 import { layoutPoint } from '../engine/viewport.js';
@@ -222,9 +222,9 @@ function loadTimeline() {
   const runs = tl.runs.slice(1).map(r => `<span title="starts at ${r.start}${r.stop !== null ? ', stopped at ' + r.stop : ''}">▶ ${label(r.action)} @${r.start}${r.loop ? ' ⟳' : ''}${r.stop !== null ? ' ■' + r.stop : ''}</span>`);
   const evs = tl.events.filter(e => e.name !== 'Name').slice(0, 300).map(e => {
     const target = S.la.named.get(e.arg);
-    return `<span class="ev" data-fr="${e.frame}" title="from ${label(e.action)}">${e.frame}: ${esc(e.name)}${target !== undefined ? ' → ' + label(target) : ' #' + hex(e.arg)}</span>`;
+    return `<span class="ev" data-fr="${e.frame}" title="from ${label(e.action)}${e.ignored ? ' (already playing: the game ignores it)' : ''}">${e.frame}: ${esc(e.name)}${target !== undefined ? ' → ' + label(target) : ' #' + hex(e.arg)}${e.ignored ? ' (ignored)' : ''}</span>`;
   });
-  ev.innerHTML = `${tl.runs[0].loop ? '⟳ loops · ' : ''}${tl.length()} frames` + (runs.length ? ' · also plays: ' + runs.join(' ') : '') + (evs.length ? '<br>' + evs.join('') : '');
+  ev.innerHTML = `${tl.runs[0].loop ? '⟳ loops · ' : ''}${tl.length()} ticks (${(tl.length() / TICKS_PER_SECOND).toFixed(2)} s)` + (runs.length ? ' · also plays: ' + runs.join(' ') : '') + (evs.length ? '<br>' + evs.join('') : '');
   ev.hidden = !(runs.length || evs.length || tl.runs[0].loop);
 }
 $('#events').onclick = e => { const d = e.target.closest('[data-fr]'); if (d) { stop(); $('#frame').value = d.dataset.fr; render(); } };
@@ -324,7 +324,7 @@ function subtree(id) {
 function render(dragOffset = null, withOutline = true) {
   if (!S.scene || !renderer) return;
   const f = +$('#frame').value;
-  $('#flabel').textContent = f;
+  $('#flabel').textContent = `${f} · ${(f / TICKS_PER_SECOND).toFixed(2)} s`;
   if (S.timeline) S.scene.seek(f); else S.scene.frame = 0;
   const prims = S.scene.primitives();
   S.lastPrims = prims;
