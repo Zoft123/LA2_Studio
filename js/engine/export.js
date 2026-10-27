@@ -64,22 +64,34 @@ export function diffRect(prev, cur, w, h) {
 }
 
 /**
- * Crop `r` of the current frame. With `transparent`, pixels equal to the previous frame become fully transparent
- * (the frame is alpha-blended over the previous one, so the result is exact while unchanged areas cost almost
- * nothing to store). Frames are opaque, so transparency only ever marks "unchanged".
+ * Crop `r` of the current frame for a delta frame. With `blend`, pixels equal to the previous frame become fully
+ * transparent and the frame is alpha-blended over the previous one, so unchanged areas cost almost nothing to store.
+ * That is exact only while every changed pixel is opaque: a frame that fades or erases a pixel (possible on a
+ * transparent background) would blend over the old pixel, so it replaces the whole rectangle instead.
+ * Returns {px, blend}: the pixels and whether they are to be blended.
  */
-export function cropDelta(prev, cur, w, r, transparent) {
+export function cropDelta(prev, cur, w, r, blend) {
   const out = new Uint8Array(r.w * r.h * 4);
-  const o32 = new Uint32Array(out.buffer), c32 = new Uint32Array(cur.buffer, cur.byteOffset, cur.length >> 2);
-  const p32 = prev ? new Uint32Array(prev.buffer, prev.byteOffset, prev.length >> 2) : null;
-  for (let y = 0; y < r.h; y++) {
-    const src = (r.y + y) * w + r.x, dst = y * r.w;
-    for (let x = 0; x < r.w; x++) {
-      const v = c32[src + x];
-      o32[dst + x] = transparent && p32 && p32[src + x] === v ? 0 : v;
+  if (blend && prev) {
+    const o32 = new Uint32Array(out.buffer), c32 = new Uint32Array(cur.buffer, cur.byteOffset, cur.length >> 2);
+    const p32 = new Uint32Array(prev.buffer, prev.byteOffset, prev.length >> 2);
+    let opaque = true;
+    for (let y = 0; y < r.h && opaque; y++) {
+      const src = (r.y + y) * w + r.x, dst = y * r.w;
+      for (let x = 0; x < r.w; x++) {
+        const v = c32[src + x];
+        if (p32[src + x] === v) o32[dst + x] = 0;
+        else if (cur[4 * (src + x) + 3] === 255) o32[dst + x] = v;
+        else { opaque = false; break; }
+      }
     }
+    if (opaque) return { px: out, blend: true };
   }
-  return out;
+  for (let y = 0; y < r.h; y++) {
+    const src = 4 * ((r.y + y) * w + r.x);
+    out.set(cur.subarray(src, src + 4 * r.w), 4 * y * r.w);
+  }
+  return { px: out, blend: false };
 }
 
 /** Integer-millisecond durations from exact ones without drift: each frame lasts until the next rounded timestamp. */
@@ -105,14 +117,14 @@ class DeltaWriter {
 }
 
 export class WebPWriter extends DeltaWriter {
-  /** quality 1 = lossless (unchanged pixels transparent + alpha blending), lower = lossy (changed rectangle only). */
+  /** quality 1 = lossless (unchanged pixels transparent + alpha blending where exact), lower = lossy (changed
+   *  rectangle only); loop 0 = forever. */
   constructor(w, h, quality = 1, loop = 0) {
     super(w, h);
     this.q = quality; this.loop = loop; this.lossless = quality >= 1;
   }
   async encode(rgba, r, dur) {
-    const first = !this.prev, blend = this.lossless && !first;
-    const px = first ? rgba : cropDelta(this.prev, rgba, this.w, r, blend);
+    const { px, blend } = cropDelta(this.prev, rgba, this.w, r, this.lossless);
     const c = new OffscreenCanvas(r.w, r.h);
     c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(px.buffer, px.byteOffset, px.byteLength), r.w, r.h), 0, 0);
     const blob = await c.convertToBlob({ type: 'image/webp', quality: this.q });
@@ -155,14 +167,14 @@ function pngChunk(id, data) {
 }
 
 export class APNGWriter extends DeltaWriter {
-  /** Lossless; frames after the first store only their changed rectangle, unchanged pixels transparent and blended. */
+  /** Lossless; frames after the first store only their changed rectangle, unchanged pixels transparent and blended
+   *  where exact; loop 0 = forever. */
   constructor(w, h, loop = 0) { super(w, h); this.loop = loop; }
   async encode(rgba, r, dur) {
-    const first = !this.prev;
-    const px = first ? rgba : cropDelta(this.prev, rgba, this.w, r, true);
+    const { px, blend } = cropDelta(this.prev, rgba, this.w, r, true);
     const row = r.w * 4, raw = new Uint8Array((row + 1) * r.h);
     for (let y = 0; y < r.h; y++) raw.set(px.subarray(y * row, (y + 1) * row), y * (row + 1) + 1);
-    this.frames.push({ data: zlibSync(raw, { level: 6 }), dur, r, blend: !first });
+    this.frames.push({ data: zlibSync(raw, { level: 6 }), dur, r, blend });
   }
   finish() {
     const parts = [Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10),
@@ -253,7 +265,7 @@ export class VideoWriter {
   constructor(fmt, codec, w, h, fps) {
     this.f = VIDEO_FORMATS[fmt]; this.codec = codec;
     this.w = w + (w & 1); this.h = h + (h & 1);        // encoders need even sizes
-    this.fps = fps; this.n = 0; this.err = null;
+    this.fps = fps; this.n = 0; this.timeMs = 0; this.err = null;
     this.canvas = new OffscreenCanvas(this.w, this.h);
     this.ctx = this.canvas.getContext('2d', { willReadFrequently: !!this.f.i444 });
   }
@@ -277,7 +289,8 @@ export class VideoWriter {
   /** Add one frame from a canvas (the renderer's), held for `durationMs`. */
   async add(source, bg, durationMs) {
     if (this.err) throw this.err;
-    const ctx = this.ctx, us = Math.round(this.n * durationMs * 1000);
+    const ctx = this.ctx, us = Math.round(this.timeMs * 1000);
+    const endMs = this.timeMs + durationMs, durationUs = Math.round(endMs * 1000) - us;
     ctx.fillStyle = `rgb(${bg[0]},${bg[1]},${bg[2]})`;
     ctx.fillRect(0, 0, this.w, this.h);
     ctx.drawImage(source, 0, 0);
@@ -285,13 +298,14 @@ export class VideoWriter {
     if (this.f.i444) {
       const px = ctx.getImageData(0, 0, this.w, this.h).data, n = this.w * this.h, buf = new Uint8Array(n * 3);
       for (let i = 0, j = 0; i < n; i++, j += 4) { buf[i] = px[j + 1]; buf[n + i] = px[j + 2]; buf[2 * n + i] = px[j]; }
-      frame = new VideoFrame(buf, { format: 'I444', codedWidth: this.w, codedHeight: this.h, timestamp: us, duration: Math.round(durationMs * 1000),
+      frame = new VideoFrame(buf, { format: 'I444', codedWidth: this.w, codedHeight: this.h, timestamp: us, duration: durationUs,
         colorSpace: { matrix: 'rgb', primaries: 'bt709', transfer: 'iec61966-2-1', fullRange: true } });
-    } else frame = new VideoFrame(this.canvas, { timestamp: us, duration: Math.round(durationMs * 1000) });
+    } else frame = new VideoFrame(this.canvas, { timestamp: us, duration: durationUs });
     const opts = { keyFrame: this.n % Math.max(1, Math.round(2 * this.fps)) === 0 };
     if (this.f.q !== undefined) opts[this.f.track === 'V_VP9' ? 'vp9' : 'av1'] = { quantizer: this.f.q };
     this.enc.encode(frame, opts);
     frame.close();
+    this.timeMs = endMs;
     this.n++;
     while (this.enc.encodeQueueSize > 3) await new Promise(r => setTimeout(r, 2));
   }

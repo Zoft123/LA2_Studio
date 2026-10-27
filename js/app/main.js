@@ -6,6 +6,9 @@ import { readDar, writeDar } from '../formats/archives.js';
 import { encrypt } from '../formats/mgo2crypt.js';
 import { Scene, Timeline, COMMANDS } from '../engine/scene.js';
 import { Renderer } from '../engine/gl.js';
+import { CropControls } from './crop.js';
+import { layoutPoint } from '../engine/viewport.js';
+import { playbackMode, exportSchedule } from '../engine/playback.js';
 import { WebPWriter, APNGWriter, VideoWriter, VIDEO_FORMATS, videoFormats, encodePNG, webpSupported } from '../engine/export.js';
 import { hex, toHex, fromHex, latin1, Reader } from '../core/bin.js';
 import { replaceTexture } from './texedit.js';
@@ -35,6 +38,8 @@ const saveSettings = () => { try { localStorage.setItem('la2studio.settings', JS
 
 let renderer;
 try { renderer = new Renderer($('#view')); } catch (e) { setTimeout(() => msg('WebGL2 is required: ' + e.message, true), 0); }
+// registered before the view's own pointer handlers so a crop drag never selects or moves objects
+const cropControls = new CropControls({ getBounds: () => S.scene?.bounds() || null, redraw: () => render(), stop: () => stop() });
 
 // ---- messages / busy ------------------------------------------------------------------------------------------
 let msgT = 0;
@@ -148,6 +153,7 @@ $('#files').onclick = e => { const d = e.target.closest('[data-i]'); if (d) open
 // ---- opening a file ------------------------------------------------------------------------------------------
 function closeFile() {
   S.file = null; S.la = null; S.scene = null; S.timeline = null; S.sel = null; stop();
+  cropControls.close();
   $('#view').classList.remove('on'); $('#stageEmpty').hidden = false;
   $('#panel').innerHTML = ''; $('#action').innerHTML = '<option value="-1">Initial state</option>'; $('#events').hidden = true;
 }
@@ -178,6 +184,7 @@ async function openFile(f, keep = null) {
     if (!S.ws && S.tab === 'weapons') S.tab = 'objects';
     if (!keep) { S.sel = null; S.hideObj = new Set(); S.hideLayer = new Set(); }
     S.scene.hidden = S.hideObj; S.scene.hiddenLayers = S.hideLayer; S.scene.showGuides = !!settings.guides;
+    cropControls.open(f.id);
     const pd = $('#action');
     pd.innerHTML = '<option value="-1">Initial state</option>' + la.actions.map((a, i) => {
       const h = la.actionHash.get(i);
@@ -203,7 +210,7 @@ async function openFile(f, keep = null) {
 function loadTimeline() {
   const a = +$('#action').value, ev = $('#events');
   if (!S.la || a < 0) { S.timeline = null; S.scene && S.scene.setTimeline(null); $('#frame').max = 0; $('#frame').value = 0; ev.hidden = true; return; }
-  S.timeline = new Timeline(S.la, a, $('#pmode').value);
+  S.timeline = new Timeline(S.la, a, currentPlaybackMode());
   S.scene.setTimeline(S.timeline);
   const tl = S.timeline;
   $('#frame').max = tl.length();
@@ -221,30 +228,61 @@ $('#action').onchange = () => { stop(); $('#frame').value = 0; loadTimeline(); r
 $('#pmode').onchange = () => { stop(); loadTimeline(); render(); };
 $('#frame').oninput = () => render();
 $('#scale').onchange = () => render();
-$('#bg').oninput = () => render();
+
+// view preferences (freeze, background) persist per browser
+const pref = k => { try { return localStorage.getItem('la2studio.' + k); } catch (e) { return null; } };
+const setPref = (k, v) => { try { localStorage.setItem('la2studio.' + k, String(v)); } catch (e) { /* storage unavailable */ } };
+
+// freeze on the last frame: plays once, for playback and export
+if (pref('freezeEnd') !== null) $('#freezeEnd').checked = pref('freezeEnd') === 'true';
+const currentPlaybackMode = () => playbackMode($('#pmode').value, $('#freezeEnd').checked);
+const playsOnce = () => currentPlaybackMode() === 'once';
+$('#freezeEnd').onchange = () => {
+  setPref('freezeEnd', $('#freezeEnd').checked);
+  const frame = +$('#frame').value;
+  stop(); loadTimeline();
+  $('#frame').value = Math.min(frame, +$('#frame').max);
+  render();
+};
+
+// background: transparent (the default) or a solid colour; video, which has no alpha, always uses the colour
+if (pref('bgTransparent') !== null) $('#bgTransparent').checked = pref('bgTransparent') === 'true';
+if (pref('bgColor')) $('#bg').value = pref('bgColor');
+const isBgTransparent = () => $('#bgTransparent').checked;
+const solidBgColor = () => { const h = $('#bg').value; return [1, 3, 5].map(i => parseInt(h.substr(i, 2), 16)); };
+const bgColor = () => isBgTransparent() ? [0, 0, 0, 0] : [...solidBgColor(), 255];
+$('#bgTransparent').onchange = () => { setPref('bgTransparent', isBgTransparent()); render(); };
+$('#bg').oninput = () => {
+  $('#bgTransparent').checked = false;
+  setPref('bgTransparent', false); setPref('bgColor', $('#bg').value);
+  render();
+};
 window.addEventListener('resize', () => { if ($('#scale').value === 'fit') render(); });
 
 function stop() { S.playing = false; $('#play').textContent = '▶'; }
 async function play() {
   if (S.playing) { stop(); return; }
   if (!S.timeline || !+$('#frame').max) { msg('Pick an action with frames first'); return; }
+  // 'once' stops on the last frame (pressing play there starts over); other modes wrap around
+  const fr = $('#frame'), max = +fr.max, once = playsOnce();
+  if (once && +fr.value >= max) { fr.value = 0; render(); }
   S.playing = true; $('#play').textContent = '■';
-  const fr = $('#frame'), g = S.gen;
-  const t0 = performance.now(), f0 = +fr.value;
+  const g = S.gen, t0 = performance.now(), f0 = +fr.value;
   while (S.playing && g === S.gen) {
-    const max = +fr.max, next = (f0 + Math.floor((performance.now() - t0) * +$('#fps').value / 1000)) % (max + 1);
+    const f = f0 + Math.floor((performance.now() - t0) * +$('#fps').value / 1000);
+    const next = once ? Math.min(max, f) : f % (max + 1);
     if (+fr.value !== next) { fr.value = next; render(); }
+    if (once && f >= max) { stop(); break; }
     await new Promise(r => requestAnimationFrame(r));
   }
 }
 $('#play').onclick = play;
 
 // ---- rendering ----------------------------------------------------------------------------------------------------
-const bgColor = () => { const h = $('#bg').value; return [1, 3, 5].map(i => parseInt(h.substr(i, 2), 16)); };
 function scaleNow() {
   const v = $('#scale').value;
   if (v !== 'fit' || !S.scene) return +v || 1;
-  const b = S.scene.bounds(), st = $('#stage');
+  const b = cropControls.previewView(), st = $('#stage');
   return Math.max(0.125, Math.floor(Math.min((st.clientWidth - 28) / b.w, (st.clientHeight - 28) / b.h) * 8) / 8);
 }
 const texSource = h => {
@@ -256,7 +294,8 @@ function subtree(id) {
   for (const o of S.la.objects) if (ids.has(o.parent)) ids.add(o.id);
   return ids;
 }
-function render(dragOffset = null) {
+/** Draw the current frame; `withOutline` false leaves the selection outline out (for exports). */
+function render(dragOffset = null, withOutline = true) {
   if (!S.scene || !renderer) return;
   const f = +$('#frame').value;
   $('#flabel').textContent = f;
@@ -264,11 +303,12 @@ function render(dragOffset = null) {
   const prims = S.scene.primitives();
   S.lastPrims = prims;
   let outline = null;
-  if (S.sel !== null && S.la.objects[S.sel]) {
+  if (withOutline && S.sel !== null && S.la.objects[S.sel]) {
     const ids = subtree(S.la.objects[S.sel].id);
     outline = prims.filter(p => ids.has(p.id)).map(p => p.pts.map(([x, y]) => dragOffset ? [x + dragOffset[0], y + dragOffset[1]] : [x, y]));
   }
-  renderer.draw(prims, S.scene.bounds(), scaleNow(), bgColor(), texSource, outline);
+  renderer.draw(prims, cropControls.previewView(), scaleNow(), bgColor(), texSource, outline);
+  cropControls.drawGuide();
 }
 
 // click to select the topmost object under the pointer
@@ -288,8 +328,7 @@ function hitTest(px, py) {
   return null;
 }
 function canvasToLayout(e) {
-  const r = $('#view').getBoundingClientRect(), b = S.scene.bounds(), s = scaleNow();
-  return [(e.clientX - r.left) * ($('#view').width / r.width) / s + b.x, (e.clientY - r.top) * ($('#view').height / r.height) / s + b.y];
+  return layoutPoint(e.clientX, e.clientY, $('#view').getBoundingClientRect(), cropControls.previewView());
 }
 let drag = null;
 $('#view').addEventListener('pointerdown', e => {
@@ -429,14 +468,17 @@ $('#saveTex').onclick = async () => {
 // ---- export ---------------------------------------------------------------------------------------------------
 $('#exportPng').onclick = () => {
   if (!S.scene) return;
-  render();
+  cropControls.cancel(false);
+  render(null, false);
   const px = renderer.pixels();
+  render();
   download(encodePNG(px.w, px.h, px.rgba), basename(S.file.entry || S.file.path).replace(/\.la2$/i, '') + `_${$('#action').value}_${$('#frame').value}.png`);
 };
 let exportCancel = false;
 $('#exportCancel').onclick = () => { exportCancel = true; };
 $('#exportAnim').onclick = async () => {
   if (!S.scene) return;
+  cropControls.cancel();
   const a = +$('#action').value;
   if (a < 0) { msg('Pick an action first'); return; }
   let fmt = $('#exportFmt').value;
@@ -459,14 +501,14 @@ $('#exportAnim').onclick = async () => {
     const scene = new Scene(S.la, S.lib);
     scene.hidden = S.hideObj; scene.hiddenLayers = S.hideLayer; scene.showGuides = !!settings.guides;
     if (S.ws) S.ws.apply(scene, wsCfg);
-    const tl = new Timeline(S.la, a, $('#pmode').value);
+    const tl = new Timeline(S.la, a, currentPlaybackMode());
     scene.setTimeline(tl);
     const canvas = document.createElement('canvas');
     const r = new Renderer(canvas);
-    const fps = +$('#fps').value, step = Math.max(1, Math.ceil(fps / 60)), dur = 1000 * step / fps;
-    const frames = Math.floor(tl.length() / step) + 1;
-    const scale = scaleNow(), view = S.scene.bounds(), bg = bgColor();
-    const W = Math.max(8, Math.round(view.w * scale)), H = Math.max(8, Math.round(view.h * scale));
+    const timing = exportSchedule(tl.length(), +$('#fps').value);
+    const frames = timing.count;
+    const scale = scaleNow(), view = cropControls.outputView(), bg = bgColor();
+    const W = Math.max(1, Math.round(view.w * scale)), H = Math.max(1, Math.round(view.h * scale));
     let kind = video ? 'video' : fmt.startsWith('webp') ? 'webp' : 'apng';
     if (video) {
       const ok = await videoFormats(W + (W & 1), H + (H & 1));
@@ -475,19 +517,21 @@ $('#exportAnim').onclick = async () => {
         if (!alt) { msg('This browser cannot encode video; exporting APNG instead'); kind = 'apng'; }
         else { msg(`${VIDEO_FORMATS[fmt].label} is not available here; using ${VIDEO_FORMATS[alt].label}`); fmt = alt; }
       }
-      if (kind === 'video') { writer = new VideoWriter(fmt, ok[fmt], W, H, 1000 / dur); await writer.open(fileHandle); }
+      if (kind === 'video') { writer = new VideoWriter(fmt, ok[fmt], W, H, timing.fps); await writer.open(fileHandle); }
     }
     if (kind === 'webp' && !(await webpSupported())) { msg('This browser cannot encode WebP; exporting APNG instead'); kind = 'apng'; }
     const q = fmt === 'webp-lossless' ? 1 : +(fmt.split('-')[1] || 90) / 100;
+    const loop = playsOnce() ? 1 : 0;
     let distinct = 0;
     for (let i = 0; i < frames; i++) {
       if (exportCancel) { if (writer && writer.abort) await writer.abort(); msg('export cancelled'); return; }
-      scene.seek(i * step);
+      const { frame: f, duration: dur } = timing.at(i);
+      scene.seek(f);
       r.draw(scene.primitives(), view, scale, bg, texSource);
-      if (kind === 'video') { await writer.add(canvas, bg, dur); distinct++; }
+      if (kind === 'video') { await writer.add(canvas, solidBgColor(), dur); distinct++; }
       else {
         const px = r.pixels();
-        if (!writer) writer = kind === 'webp' ? new WebPWriter(px.w, px.h, q) : new APNGWriter(px.w, px.h);
+        if (!writer) writer = kind === 'webp' ? new WebPWriter(px.w, px.h, q, loop) : new APNGWriter(px.w, px.h, loop);
         if (await writer.add(px.rgba, dur)) distinct++;
       }
       if (i % 4 === 0) {
@@ -890,5 +934,5 @@ if (qs.get('dev')) {
     window.__la2ready = true;
   })();
 }
-window.__la2 = { S, render, openFile, selectFolder, edit, renderer: () => renderer };
+window.__la2 = { S, render, openFile, selectFolder, edit, renderer: () => renderer, crop: cropControls };
 showTab();

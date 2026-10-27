@@ -65,9 +65,14 @@ main { flex: 1; display: grid; grid-template-columns: 260px minmax(0, 1fr) 390px
 .events .ev { cursor: pointer; margin-right: 10px; } .events .ev:hover { color: var(--accent); }
 .stage { position: relative; flex: 1; overflow: auto; display: flex; align-items: safe center; justify-content: safe center; padding: 12px;
   background: repeating-conic-gradient(var(--stage-a) 0 25%, var(--stage-b) 0 50%) 0 0 / 24px 24px; }
-#view { image-rendering: pixelated; touch-action: none; display: none; box-shadow: 0 1px 6px rgba(0,0,0,.25); }
+#view { image-rendering: pixelated; touch-action: none; display: none; box-shadow: 0 0 0 1px var(--line), 0 2px 8px rgba(0,0,0,.25); }
 #view.on { display: block; }
 body.dragmode #view { cursor: grab; } #view.dragging { cursor: grabbing; }
+body.cropmode #view { cursor: crosshair; }
+.cropbar label { display: inline-flex; align-items: center; gap: 4px; }
+.cropbar input[type=number] { width: 76px; padding: 4px 5px; }
+.cropbar input:invalid { border-color: var(--err); }
+.crop-guide { position: fixed; z-index: 5; pointer-events: none; border: 2px dashed var(--accent); background: #c2187a20; }
 .stage-empty { color: var(--dim); }
 
 .tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--line); }

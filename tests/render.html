@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>LA2 Studio renderer checks</title>
+<pre id="results">Running WebGL2 checks…</pre>
+<script type="module">
+import { Renderer } from '../js/engine/gl.js';
+
+const results = document.querySelector('#results');
+try {
+  const renderer = new Renderer(document.createElement('canvas'));
+  const view = { x: 0, y: 0, w: 8, h: 8 };
+  const color = [0.25, 0.5, 0.75, 0.5];
+  const quad = blend => ({
+    kind: 'fan', pts: [[0, 0], [8, 0], [8, 8], [0, 8]],
+    cols: [color, color, color, color], blend, tex: null,
+  });
+  const check = (label, blend, bg, expected) => {
+    renderer.draw(blend ? [quad(blend)] : [], view, 1, bg, () => null);
+    const actual = [...renderer.pixels().rgba.slice((4 * 8 + 4) * 4, (4 * 8 + 4) * 4 + 4)];
+    if (actual.some((value, i) => Math.abs(value - expected[i]) > 2)) {
+      throw new Error(`${label}: got ${actual}, expected ${expected}`);
+    }
+    return `PASS ${label}: ${actual}`;
+  };
+  const lines = [];
+  lines.push(check('normal on transparent', 'normal', [0, 0, 0, 0], [64, 128, 191, 128]));
+  lines.push(check('opaque ignores source alpha', 'none', [0, 0, 0, 0], [64, 128, 191, 255]));
+  lines.push(check('normal resets the opaque uniform', 'normal', [0, 0, 0, 0], [64, 128, 191, 128]));
+  lines.push(check('normal on solid background', 'normal', [32, 64, 96, 255], [48, 96, 144, 255]));
+  lines.push(check('partially transparent clear', null, [64, 128, 192, 128], [64, 128, 191, 128]));
+  const tile = (x, color) => ({ kind: 'fan', pts: [[x, 0], [x + 4, 0], [x + 4, 4], [x, 4]],
+    cols: [color, color, color, color], blend: 'normal', tex: null });
+  for (const scale of [0.25, 1, 2]) {
+    renderer.draw([tile(0, [1, 0, 0, 1]), tile(4, [0, 0, 1, 1])],
+      { x: 4, y: 0, w: 4, h: 4 }, scale, [0, 0, 0, 0], () => null);
+    const pixels = renderer.pixels();
+    if (pixels.w !== Math.round(4 * scale) || pixels.h !== Math.round(4 * scale)) throw new Error('Wrong crop dimensions');
+    for (let i = 0; i < pixels.rgba.length; i += 4) {
+      if (pixels.rgba[i] !== 0 || pixels.rgba[i + 1] !== 0 || pixels.rgba[i + 2] !== 255 || pixels.rgba[i + 3] !== 255) {
+        throw new Error(`Crop includes pixels outside the selected blue tile at zoom ${scale}`);
+      }
+    }
+    lines.push(`PASS crop at zoom ${scale}: ${pixels.w} × ${pixels.h}, blue tile only`);
+  }
+  results.textContent = lines.join('\n');
+  document.title = 'PASS — LA2 Studio renderer checks';
+} catch (error) {
+  results.textContent = `FAIL ${error.stack || error}`;
+  document.title = 'FAIL — LA2 Studio renderer checks';
+}
+</script>

@@ -205,18 +205,18 @@ export class Library {
   }
 
   // ---- textures ----------------------------------------------------------------------------------------------
-  /** Texture sources for an LA2 folder: its own .qar/.txn, else the folders above it up to the stage folder;
+  /** Texture sources for an LA2 folder: its own .qar/.txn, then ancestors up to the stage folder;
    *  plus the paired o/stage/<name> <-> o/dl/p/stage/<name> folder. */
   textureDirs(dir) {
     const has = d => (this.dirs.get(d)?.files || []).some(p => ext(p) === '.qar' || ext(p) === '.txn');
-    let found = has(dir) ? [dir] : [];
-    if (!found.length) {
-      let d = dir;
-      for (let k = 0; k < 4 && d.includes('/'); k++) {
-        d = dirname(d);
-        if (has(d)) found.push(d);
-        if (basename(dirname(d)) === 'stage') break;
-      }
+    // a folder and its extracted Qar/ subfolder (the TXNs of an extracted archive, beside its Dar/)
+    const sources = d => [d, ...[...(this.dirs.get(d)?.subdirs || [])].filter(s => basename(s).toLowerCase() === 'qar')].filter(has);
+    const found = sources(dir);
+    let d = dir;
+    for (let k = 0; k < 4 && d.includes('/'); k++) {
+      d = dirname(d);
+      found.push(...sources(d));
+      if (basename(dirname(d)) === 'stage') break;
     }
     const paired = [];
     for (const d of found) {
@@ -237,7 +237,8 @@ export class Library {
       if (progress) progress(i, archives.length, p);
       try {
         const data = await this.read(p);
-        const loc = dirname(p) + '|' + basename(p).slice(0, -4);
+        const extracted = ext(p) === '.txn' && basename(dirname(p)).toLowerCase() === 'qar';
+        const loc = dirname(p) + '|' + (extracted ? '@txn' : basename(p).slice(0, -4));
         const tables = ext(p) === '.txn' ? [data] : readQar(data).filter(e => e.name.endsWith('.txn')).map(e => e.data);
         for (const t of tables) for (const info of parseTxn(t)) {
           if (!index.has(info.tex)) index.set(info.tex, []);
@@ -256,10 +257,13 @@ export class Library {
     const dirs = [...this.dirs.keys()].filter(d => (this.dirs.get(d).files || []).some(p => ext(p) === '.qar' || ext(p) === '.txn'));
     this.fallback = await this.indexTextures(dirs, progress);
   }
-  /** DLZ files holding a location's texture data: <base>*.dlz, or every DLZ beside a loose <hash>.txn. */
+  /** DLZ files holding a location's texture data: <base>*.dlz, or every DLZ beside a loose <hash>.txn; an
+   *  extracted Qar folder's TXNs ("@txn") use the DLZs beside them, else those of the folder above. */
   dlzFor(loc) {
     const [dir, base] = loc.split('|');
     const files = this.dirs.get(dir)?.files || [];
+    const dlzIn = list => list.filter(p => ext(p) === '.dlz');
+    if (base === '@txn') return dlzIn(files).length ? dlzIn(files) : dlzIn(this.dirs.get(dirname(dir))?.files || []);
     let dlz = files.filter(p => ext(p) === '.dlz' && basename(p).startsWith(base) && '._'.includes(basename(p)[base.length]));
     if (!dlz.length && !files.some(p => basename(p) === base + '.qar') && files.some(p => basename(p) === base + '.txn'))
       dlz = files.filter(p => ext(p) === '.dlz');
@@ -271,7 +275,11 @@ export class Library {
     const pool = new TexturePool();
     const files = this.dirs.get(dir)?.files || [];
     const qar = files.find(p => basename(p) === base + '.qar'), txn = files.find(p => basename(p) === base + '.txn');
-    if (qar) for (const e of readQar(await this.read(qar))) { if (e.name.endsWith('.txn')) try { pool.addTxn(e.data); } catch (x) {} }
+    if (base === '@txn') {
+      // the extracted TXNs share one pool, so their common DLZs are inflated once
+      for (const p of files.filter(p => ext(p) === '.txn')) try { pool.addTxn(await this.read(p)); } catch (x) {}
+    }
+    else if (qar) for (const e of readQar(await this.read(qar))) { if (e.name.endsWith('.txn')) try { pool.addTxn(e.data); } catch (x) {} }
     else if (txn) pool.addTxn(await this.read(txn));
     // MGO2 DLC folders (o/dl/p/stage/<name>): .dci image remaps, and the base folder's DLZs underneath, since a
     // patched TXN keeps reading its unchanged images from the base stage

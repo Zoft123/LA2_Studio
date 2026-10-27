@@ -584,7 +584,7 @@ var APP_NAME = "https://github.com/Vanilagy/webm-muxer";
 var SEGMENT_SIZE_BYTES = 6;
 var CLUSTER_SIZE_BYTES = 5;
 var FIRST_TIMESTAMP_BEHAVIORS = ["strict", "offset", "permissive"];
-var _options, _writer, _segment, _segmentInfo, _seekHead, _tracksElement, _segmentDuration, _colourElement, _videoCodecPrivate, _audioCodecPrivate, _subtitleCodecPrivate, _cues, _currentCluster, _currentClusterTimestamp, _duration, _videoChunkQueue, _audioChunkQueue, _subtitleChunkQueue, _firstVideoTimestamp, _firstAudioTimestamp, _lastVideoTimestamp, _lastAudioTimestamp, _lastSubtitleTimestamp, _colorSpace, _finalized, _validateOptions, validateOptions_fn, _createFileHeader, createFileHeader_fn, _writeEBMLHeader, writeEBMLHeader_fn, _createCodecPrivatePlaceholders, createCodecPrivatePlaceholders_fn, _createColourElement, createColourElement_fn, _createSeekHead, createSeekHead_fn, _createSegmentInfo, createSegmentInfo_fn, _createTracks, createTracks_fn, _createSegment, createSegment_fn, _createCues, createCues_fn, _maybeFlushStreamingTargetWriter, maybeFlushStreamingTargetWriter_fn, _segmentDataOffset, segmentDataOffset_get, _writeVideoDecoderConfig, writeVideoDecoderConfig_fn, _fixVP9ColorSpace, fixVP9ColorSpace_fn, _writeSubtitleChunks, writeSubtitleChunks_fn, _createInternalChunk, createInternalChunk_fn, _validateTimestamp, validateTimestamp_fn, _writeBlock, writeBlock_fn, _createCodecPrivateElement, createCodecPrivateElement_fn, _writeCodecPrivate, writeCodecPrivate_fn, _createNewCluster, createNewCluster_fn, _finalizeCurrentCluster, finalizeCurrentCluster_fn, _ensureNotFinalized, ensureNotFinalized_fn;
+var _options, _writer, _segment, _segmentInfo, _seekHead, _tracksElement, _segmentDuration, _colourElement, _videoCodecPrivate, _audioCodecPrivate, _subtitleCodecPrivate, _cues, _currentCluster, _currentClusterTimestamp, _duration, _videoChunkQueue, _audioChunkQueue, _subtitleChunkQueue, _firstVideoTimestamp, _firstAudioTimestamp, _lastVideoTimestamp, _previousVideoBlockTimestamp, _lastAudioTimestamp, _lastSubtitleTimestamp, _colorSpace, _finalized, _validateOptions, validateOptions_fn, _createFileHeader, createFileHeader_fn, _writeEBMLHeader, writeEBMLHeader_fn, _createCodecPrivatePlaceholders, createCodecPrivatePlaceholders_fn, _createColourElement, createColourElement_fn, _createSeekHead, createSeekHead_fn, _createSegmentInfo, createSegmentInfo_fn, _createTracks, createTracks_fn, _createSegment, createSegment_fn, _createCues, createCues_fn, _maybeFlushStreamingTargetWriter, maybeFlushStreamingTargetWriter_fn, _segmentDataOffset, segmentDataOffset_get, _writeVideoDecoderConfig, writeVideoDecoderConfig_fn, _fixVP9ColorSpace, fixVP9ColorSpace_fn, _writeSubtitleChunks, writeSubtitleChunks_fn, _createInternalChunk, createInternalChunk_fn, _validateTimestamp, validateTimestamp_fn, _writeBlock, writeBlock_fn, _createCodecPrivateElement, createCodecPrivateElement_fn, _writeCodecPrivate, writeCodecPrivate_fn, _createNewCluster, createNewCluster_fn, _finalizeCurrentCluster, finalizeCurrentCluster_fn, _ensureNotFinalized, ensureNotFinalized_fn;
 var Muxer = class {
   constructor(options) {
     __privateAdd(this, _validateOptions);
@@ -631,6 +631,7 @@ var Muxer = class {
     __privateAdd(this, _firstVideoTimestamp, void 0);
     __privateAdd(this, _firstAudioTimestamp, void 0);
     __privateAdd(this, _lastVideoTimestamp, -1);
+    __privateAdd(this, _previousVideoBlockTimestamp, void 0);
     __privateAdd(this, _lastAudioTimestamp, -1);
     __privateAdd(this, _lastSubtitleTimestamp, -1);
     __privateAdd(this, _colorSpace, void 0);
@@ -668,9 +669,13 @@ var Muxer = class {
     }
     let data = new Uint8Array(chunk.byteLength);
     chunk.copyTo(data);
-    this.addVideoChunkRaw(data, chunk.type, timestamp ?? chunk.timestamp, meta);
+    this.addVideoChunkRaw(data, chunk.type, timestamp ?? chunk.timestamp, meta, chunk.duration);
   }
-  addVideoChunkRaw(data, type, timestamp, meta) {
+  addVideoChunkRaw(data, type, timestamp, meta, duration) {
+    duration = duration ?? void 0;
+    if (duration !== void 0 && (!Number.isFinite(duration) || duration < 0)) {
+      throw new TypeError("Video chunk duration must be a non-negative real number.");
+    }
     if (!(data instanceof Uint8Array)) {
       throw new TypeError("addVideoChunkRaw's first argument (data) must be an instance of Uint8Array.");
     }
@@ -690,7 +695,7 @@ var Muxer = class {
       __privateSet(this, _firstVideoTimestamp, timestamp);
     if (meta)
       __privateMethod(this, _writeVideoDecoderConfig, writeVideoDecoderConfig_fn).call(this, meta);
-    let videoChunk = __privateMethod(this, _createInternalChunk, createInternalChunk_fn).call(this, data, type, timestamp, VIDEO_TRACK_NUMBER);
+    let videoChunk = __privateMethod(this, _createInternalChunk, createInternalChunk_fn).call(this, data, type, timestamp, VIDEO_TRACK_NUMBER, duration);
     if (__privateGet(this, _options).video.codec === "V_VP9")
       __privateMethod(this, _fixVP9ColorSpace, fixVP9ColorSpace_fn).call(this, videoChunk);
     __privateSet(this, _lastVideoTimestamp, videoChunk.timestamp);
@@ -853,6 +858,7 @@ _subtitleChunkQueue = new WeakMap();
 _firstVideoTimestamp = new WeakMap();
 _firstAudioTimestamp = new WeakMap();
 _lastVideoTimestamp = new WeakMap();
+_previousVideoBlockTimestamp = new WeakMap();
 _lastAudioTimestamp = new WeakMap();
 _lastSubtitleTimestamp = new WeakMap();
 _colorSpace = new WeakMap();
@@ -1239,18 +1245,32 @@ writeBlock_fn = function(chunk, canCreateNewCluster) {
     ] };
     __privateGet(this, _writer).writeEBML(simpleBlock);
   } else {
-    let msDuration = Math.floor(chunk.duration / 1e3);
+    // Local patch: preserve per-frame durations and delta-frame references.
+    let msDuration = Math.floor((chunk.timestamp + (chunk.duration ?? 0)) / 1e3) - msTimestamp;
+    let reference = null;
+    if (chunk.trackNumber === VIDEO_TRACK_NUMBER && chunk.type !== "key") {
+      let previous = __privateGet(this, _previousVideoBlockTimestamp);
+      if (previous !== void 0) {
+        let bytes = new Uint8Array(4);
+        new DataView(bytes.buffer).setInt32(0, previous - msTimestamp, false);
+        reference = { id: 251 /* ReferenceBlock */, data: bytes };
+      }
+    }
     let blockGroup = { id: 160 /* BlockGroup */, data: [
       { id: 161 /* Block */, data: [
         prelude,
         chunk.data
       ] },
       chunk.duration !== void 0 ? { id: 155 /* BlockDuration */, data: msDuration } : null,
+      reference,
       chunk.additions ? { id: 30113 /* BlockAdditions */, data: chunk.additions } : null
     ] };
     __privateGet(this, _writer).writeEBML(blockGroup);
   }
-  __privateSet(this, _duration, Math.max(__privateGet(this, _duration), msTimestamp));
+  if (chunk.trackNumber === VIDEO_TRACK_NUMBER) {
+    __privateSet(this, _previousVideoBlockTimestamp, msTimestamp);
+  }
+  __privateSet(this, _duration, Math.max(__privateGet(this, _duration), (chunk.timestamp + (chunk.duration ?? 0)) / 1e3));
 };
 _createCodecPrivateElement = new WeakSet();
 createCodecPrivateElement_fn = function(data) {

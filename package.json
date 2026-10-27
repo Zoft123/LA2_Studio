@@ -6,7 +6,7 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "test": "node tests/run.mjs",
+    "test": "node tests/check.mjs",
     "serve": "python3 -m http.server 8000"
   }
 }

@@ -7,7 +7,7 @@
 
 const VS = `#version 300 es
 in vec2 aPos; in vec2 aUV; in vec4 aCol;
-uniform vec4 uView;   // x0, y0 (px), 2 * scale / w, 2 * scale / h
+uniform vec4 uView;   // x0, y0 (layout px), 2 / view width, 2 / view height
 out vec2 vUV; out vec4 vCol;
 void main() {
   vec2 p = (aPos - uView.xy) * uView.zw;
@@ -18,10 +18,14 @@ const FS = `#version 300 es
 precision highp float;
 in vec2 vUV; in vec4 vCol;
 uniform sampler2D uTex; uniform bool uUseTex;
+uniform bool uOpaque;
 out vec4 o;
 void main() {
   vec4 c = vCol;
   if (uUseTex) c *= texture(uTex, vUV);
+  // blending off replaces the destination whatever the source alpha: store alpha 1 too, so the framebuffer stays
+  // valid premultiplied RGBA
+  if (uOpaque) c.a = 1.0;
   o = c;
 }`;
 
@@ -36,7 +40,7 @@ function shader(gl, type, src) {
 export class Renderer {
   /** @param {HTMLCanvasElement | OffscreenCanvas} canvas */
   constructor(canvas) {
-    const gl = this.gl = canvas.getContext('webgl2', { alpha: false, antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: true });
+    const gl = this.gl = canvas.getContext('webgl2', { alpha: true, antialias: false, premultipliedAlpha: true, preserveDrawingBuffer: true });
     if (!gl) throw new Error('WebGL2 is not available in this browser');
     this.canvas = canvas;
     const p = this.prog = gl.createProgram();
@@ -45,7 +49,8 @@ export class Renderer {
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
     this.loc = { pos: gl.getAttribLocation(p, 'aPos'), uv: gl.getAttribLocation(p, 'aUV'), col: gl.getAttribLocation(p, 'aCol'),
-      view: gl.getUniformLocation(p, 'uView'), tex: gl.getUniformLocation(p, 'uTex'), useTex: gl.getUniformLocation(p, 'uUseTex') };
+      view: gl.getUniformLocation(p, 'uView'), tex: gl.getUniformLocation(p, 'uTex'), useTex: gl.getUniformLocation(p, 'uUseTex'),
+      opaque: gl.getUniformLocation(p, 'uOpaque') };
     this.vao = gl.createVertexArray();
     this.buf = gl.createBuffer();
     gl.bindVertexArray(this.vao);
@@ -82,6 +87,7 @@ export class Renderer {
 
   _blend(mode) {
     const gl = this.gl;
+    gl.uniform1i(this.loc.opaque, mode === 'none' ? 1 : 0);
     if (mode === 'none') { gl.disable(gl.BLEND); return; }
     gl.enable(gl.BLEND);
     if (mode === 'add') { gl.blendEquation(gl.FUNC_ADD); gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE); }
@@ -90,19 +96,20 @@ export class Renderer {
   }
 
   /**
-   * Draw a frame. view {x, y, w, h} in layout px, scale, bg [r, g, b] 0..255; textures(hash) -> {key, image()}.
+   * Draw a frame. view {x, y, w, h} in layout px, scale, bg [r, g, b, (a)] 0..255; textures(hash) -> {key, image()}.
    * The canvas is resized to view * scale.
    */
   draw(prims, view, scale, bg, textures, outline = null) {
     const gl = this.gl;
-    const W = Math.max(8, Math.round(view.w * scale)), H = Math.max(8, Math.round(view.h * scale));
+    const W = Math.max(1, Math.round(view.w * scale)), H = Math.max(1, Math.round(view.h * scale));
     if (this.canvas.width !== W || this.canvas.height !== H) { this.canvas.width = W; this.canvas.height = H; }
     gl.viewport(0, 0, W, H);
-    gl.clearColor(bg[0] / 255, bg[1] / 255, bg[2] / 255, 1);
+    const a = (bg[3] ?? 255) / 255;                  // the canvas holds premultiplied colour
+    gl.clearColor(bg[0] / 255 * a, bg[1] / 255 * a, bg[2] / 255 * a, a);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this.prog);
     gl.bindVertexArray(this.vao);
-    gl.uniform4f(this.loc.view, view.x, view.y, 2 * scale / W, 2 * scale / H);
+    gl.uniform4f(this.loc.view, view.x, view.y, 2 / view.w, 2 / view.h);
     gl.uniform1i(this.loc.tex, 0);
     gl.activeTexture(gl.TEXTURE0);
     // batch consecutive primitives with the same texture and blend mode
@@ -181,6 +188,15 @@ export class Renderer {
     gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
     const row = W * 4, out = new Uint8Array(px.length);
     for (let y = 0; y < H; y++) out.set(px.subarray((H - 1 - y) * row, (H - y) * row), y * row);
+    // back to straight alpha, as PNG / WebP / APNG store it
+    for (let i = 0; i < out.length; i += 4) {
+      const a = out[i + 3];
+      if (a > 0 && a < 255) {
+        out[i] = Math.min(255, Math.round(out[i] * 255 / a));
+        out[i + 1] = Math.min(255, Math.round(out[i + 1] * 255 / a));
+        out[i + 2] = Math.min(255, Math.round(out[i + 2] * 255 / a));
+      }
+    }
     return { w: W, h: H, rgba: out };
   }
 }

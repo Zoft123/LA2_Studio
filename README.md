@@ -36,6 +36,8 @@ data is included in this repository.
 - Mask / guide shapes in MGS4's Flash-converted layouts, which the game never draws, are hidden (they can be shown
   from Settings).
 - Real-time playback at 15–180 fps with loop, once and ping-pong modes, frame stepping and scrubbing.
+- Crop the live view and all exports by dragging an area or entering an exact rectangle. Crop settings stay
+  with each layout during the session and do not alter the game's LA2 data.
 - **Command timeline:** actions that start, loop or stop other actions and reorder layers are simulated, so
   composite screens play as a whole; fired commands are listed and clickable.
 - Incremental playback with snapshots: even MGS4 layouts with millions of keyframes seek instantly.
@@ -69,12 +71,18 @@ data is included in this repository.
 ### Export and saving
 - **Video** (small files, made by the browser's own encoders):
   - **AV1 4:4:4** — full colour resolution (no chroma subsampling, the RGB pixels are stored directly) in three
-    presets: *high quality*, *near-lossless* (default) and *compact*, all visually lossless (about 51–55 dB PSNR).
+    presets: *high quality*, *near-lossless* and *compact*, all visually lossless (about 51–55 dB PSNR).
   - **VP9 WebM** and **H.264 MP4** for the widest compatibility (4:2:0 colour).
   - Long videos stream straight to the chosen file in Chrome / Edge, so length is not limited by memory.
-- **Exact animated images:** lossless **WebP** (or lossy 95 → 50) and **APNG**. Frames after the first store only
-  the area that changed, with unchanged pixels left transparent, so the result is pixel-exact; timing is exact.
-- Single frames as PNG.
+- **Exact animated images:** lossless **WebP** (the default; or lossy 95 → 50) and **APNG**. Frames after the first
+  store only the area that changed, with unchanged pixels left transparent, so the result is pixel-exact; timing is
+  exact.
+- **Transparent background** (the default): PNG, WebP and APNG keep the layout's real alpha, so exports can be
+  composited over anything. Untick *Transparent* or pick a colour for a solid background; video has no alpha and
+  always uses the picked colour.
+- **Freeze last frame** plays the action once and stops on its final frame, in the preview and in exports (animated
+  images then play once instead of looping). Exports always include the final frame, at every fps.
+- Single frames as PNG (without the selection outline).
 
 Which to choose: animated layouts that change across the whole screen every frame (fades, scrolling, video-like
 backgrounds) make any lossless image format huge — a 10-minute MGS4 clip is around 13 GB as lossless WebP but
@@ -120,7 +128,8 @@ python3 -m http.server 8000
 | Area | What it does |
 |---|---|
 | **Folders / Files** | Folders that contain LA2 data, then the layouts in the selected folder (loose files and `.dar` entries). Tick *subfolders* to include everything below. |
-| **Toolbar** | Action, play, frame, play mode, fps, zoom (*fit* scales to the window), background colour, drag-to-move. |
+| **Toolbar** | Action, play, frame, play mode, freeze last frame, fps, zoom (*fit* scales to the window), transparent / solid background colour, drag-to-move. |
+| **Crop** | Enable a custom viewport, enter X / Y / W / H, select an area by dragging, or reset to the full layout. Applies to the live view and exports. |
 | **Export / Save** | Animation export, frame PNG, undo / redo / revert, save `.la2`, `.dar` and edited textures. |
 | **Objects** | The object tree. Untick to hide in the preview only; add new objects at the root. |
 | **Properties** | Fields of the selected object, duplicate / delete, add child objects, raw packet editor. |
@@ -135,10 +144,20 @@ Ctrl+Z / Ctrl+Y undo / redo · `/` filter files · `o` open folder · Esc clear 
 **Edits stay in the browser** until you save them: use **Save .la2**, **Save .dar** or **Save textures** to
 download the edited files, then copy them into your game folder (keep a backup of the originals).
 
+To crop, click **Select area**, then drag a rectangle on the full layout. Selection pauses playback;
+press Play again to watch the cropped animation. **Esc** or **Cancel crop** keeps the previous crop.
+You can also tick **Crop** and enter **X**, **Y**, **W**, and **H** in layout pixels, including negative
+coordinates. Numeric changes update the live view while playback continues. **Reset** restores the full
+layout. Each file remembers its crop until the page is reloaded; undo/redo of layout edits keeps it.
+
+The same crop is used for frame PNG, WebP, APNG, and video exports. Zoom still controls output resolution:
+choose zoom **1** to export the entered width and height in pixels. Video exports round odd dimensions up
+to an even size. Cropping changes framing only; it does not move objects or change a saved `.la2` file.
+
 ## How files are found
 
-- **Textures** come from the selected folder's archives. A folder without archives (an extracted
-  `convert/archive/Dar` layout, for example) uses the folders above it up to its stage folder, and MGO2's
+- **Textures** come from the selected folder's archives first, then the folders above it up to its stage folder.
+  Extracted `Dar` layouts also find sibling `Qar` TXNs and their parent folder's DLZs. MGO2's
   `o/stage/<name>` and `o/dl/p/stage/<name>` folders are paired automatically. If something is still missing,
   *Search everything* in the Textures tab indexes every archive in the opened folder.
 - **MGO2 DLC textures** follow the game's own resolution: a patch folder's `.dci` index remaps a patched TXN's
@@ -199,20 +218,38 @@ index.html, css/          the page
 js/core/bin.js            binary reading / writing, the MGS string hash
 js/formats/               la2.js (reader), model.js (writer and edits), archives.js (DAR / QAR / DLZ),
                           textures.js (TXN / DLD / DXT decoding), dxtenc.js (DXT encoding), mgo2crypt.js
-js/engine/                scene.js (state, playback, timeline, draw list), gl.js (WebGL renderer), export.js
-js/app/                   main.js (UI), library.js (folders, decryption, texture lookup), texedit.js
+js/engine/                scene.js (state, playback, timeline, draw list), gl.js (WebGL renderer), export.js,
+                          playback.js (play modes, export frame schedule), viewport.js (crop geometry)
+js/app/                   main.js (UI), library.js (folders, decryption, texture lookup), crop.js, texedit.js
 docs/FORMAT.md            format reference
+tests/check.mjs           `npm test`: playback, export, crop and app regression tests
 tests/run.mjs             round-trip tests against your own game files
+tests/render.html         WebGL2 alpha and crop checks, run in a browser
 tests/serve.py            development server for automated browser tests
 ```
 
-Run the format tests on your own files (Node.js 18 or later):
+Run the playback, export timing and alpha regression tests (Node.js 18 or later):
+
+```sh
+npm test
+```
+
+To also run the format tests on your own files:
+
+```sh
+npm test -- /path/to/game/folder [more folders...]
+```
+
+The format tests can also be run directly:
 
 ```sh
 node tests/run.mjs /path/to/game/folder [more folders...]
 ```
 
 They check that every layout parses, rebuilds byte for byte, survives structural edits and plays.
+
+For actual GPU alpha checks, serve the app and open `tests/render.html` in a WebGL2 browser.
+It checks transparent and solid backgrounds, opaque draws, and normal blending after an opaque draw.
 
 The file format is described in [docs/FORMAT.md](docs/FORMAT.md).
 
