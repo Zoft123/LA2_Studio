@@ -23,6 +23,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const S = {
   lib: null, dir: null, files: [], file: null,
   la: null, bytes: null, scene: null, timeline: null,
+  also: [],                // actions played alongside the selected one (looping)
   sel: null, tab: 'objects', expanded: new Set(), hideObj: new Set(), hideLayer: new Set(),
   edits: new Map(),        // file id -> {bytes, undo: [], redo: []}
   texEdits: new Map(),     // dlz path -> edited DLD bytes
@@ -190,8 +191,10 @@ async function openFile(f, keep = null) {
       const h = la.actionHash.get(i);
       return `<option value="${i}">Action ${i}${h !== undefined ? ' #' + hex(h) : ''} · ${a.tracks.length} tracks${a.flags ? ' · loops' : ''}</option>`;
     }).join('');
-    if (keep) { pd.value = keep.action; S.sel = keep.sel !== null && keep.sel < la.objects.length ? keep.sel : null; S.tab = keep.tab; }
-    else { pd.value = '-1'; }
+    $('#alsoAdd').innerHTML = '<option value="">+ also play…</option>' + pd.innerHTML.replace(/^<option value="-1">Initial state<\/option>/, '');
+    if (keep) { pd.value = keep.action; S.also = S.also.filter(i => i < la.actions.length); S.sel = keep.sel !== null && keep.sel < la.objects.length ? keep.sel : null; S.tab = keep.tab; }
+    else { pd.value = '-1'; S.also = gameLayers(la); }
+    drawAlso();
     $('#info').textContent = `${f.id} · v${(la.version & 0xFFFF).toString(16)} · ${la.le ? 'PC (LE)' : 'PS3 (BE)'} · ${la.objects.length} objects · ${la.actions.length} actions · ${la.tex_tbl.length} textures${ed ? ' · edited' : ''}`;
     $('#info').title = f.path + (f.entry ? ' :: ' + f.entry : '');
     $('#view').classList.add('on'); $('#stageEmpty').hidden = true;
@@ -210,7 +213,7 @@ async function openFile(f, keep = null) {
 function loadTimeline() {
   const a = +$('#action').value, ev = $('#events');
   if (!S.la || a < 0) { S.timeline = null; if (S.scene) { S.scene.setTimeline(null); S.scene.fitTimeline(); } $('#frame').max = 0; $('#frame').value = 0; ev.hidden = true; return; }
-  S.timeline = new Timeline(S.la, a, currentPlaybackMode());
+  S.timeline = new Timeline(S.la, a, currentPlaybackMode(), { also: S.also });
   S.scene.setTimeline(S.timeline);
   S.scene.fitTimeline();
   const tl = S.timeline;
@@ -227,6 +230,28 @@ function loadTimeline() {
 $('#events').onclick = e => { const d = e.target.closest('[data-fr]'); if (d) { stop(); $('#frame').value = d.dataset.fr; render(); } };
 $('#action').onchange = () => { stop(); $('#frame').value = 0; loadTimeline(); render(); if (S.tab === 'keys') showTab(); };
 $('#pmode').onchange = () => { stop(); loadTimeline(); render(); };
+
+// actions the game keeps running under the selected one: the lobby rule screen (rule_anime) loops its soldiers'
+// run cycle (#2b7872) and goals (#925b6e) under every rule's action (MGO2 sub_9BF450), so on their own the
+// soldiers only appear once they stop running
+const GAME_LAYERS = [[0x2b7872, 0x925b6e]];
+const gameLayers = la => (GAME_LAYERS.find(hs => hs.every(h => la.named.has(h))) || []).map(h => la.named.get(h));
+function drawAlso() {
+  $('#alsoList').innerHTML = S.also.map(i => {
+    const h = S.la.actionHash.get(i);
+    return `<span class="chip" title="Plays alongside the selected action, looping">${i}${h !== undefined ? ' #' + hex(h) : ''}<button data-rm="${i}" aria-label="Stop playing action ${i} alongside">×</button></span>`;
+  }).join('');
+}
+const alsoChanged = () => { stop(); drawAlso(); loadTimeline(); render(); };
+$('#alsoAdd').onchange = () => {
+  const v = $('#alsoAdd').value, i = +v;
+  $('#alsoAdd').value = '';
+  if (v !== '' && S.la && !S.also.includes(i)) { S.also.push(i); alsoChanged(); }
+};
+$('#alsoList').onclick = e => {
+  const b = e.target.closest('[data-rm]');
+  if (b) { S.also = S.also.filter(i => i !== +b.dataset.rm); alsoChanged(); }
+};
 $('#frame').oninput = () => render();
 $('#scale').onchange = () => render();
 
@@ -502,7 +527,7 @@ $('#exportAnim').onclick = async () => {
     const scene = new Scene(S.la, S.lib);
     scene.hidden = S.hideObj; scene.hiddenLayers = S.hideLayer; scene.showGuides = !!settings.guides;
     if (S.ws) S.ws.apply(scene, wsCfg);
-    const tl = new Timeline(S.la, a, currentPlaybackMode());
+    const tl = new Timeline(S.la, a, currentPlaybackMode(), { also: S.also });
     scene.setTimeline(tl);
     const canvas = document.createElement('canvas');
     const r = new Renderer(canvas);

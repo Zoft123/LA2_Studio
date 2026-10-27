@@ -36,6 +36,11 @@ data is included in this repository.
 - Mask / guide shapes in MGS4's Flash-converted layouts, which the game never draws, are hidden (they can be shown
   from Settings).
 - Real-time playback at 15–180 fps with loop, once and ping-pong modes, frame stepping and scrubbing.
+- **Also play:** run other actions alongside the selected one, looping, for screens the game builds from several
+  actions at once. MGO2's lobby rule screen (`rule_anime.la2`) gets the game's own pair by default: the soldiers'
+  run cycle and trails (#2b7872) and the goals (#925b6e) keep looping under every rule's action, which only moves
+  the soldiers and switches their poses.
+- The view covers everything an action shows, including objects that move outside the layout's starting area.
 - Crop the live view and all exports by dragging an area or entering an exact rectangle. Crop settings stay
   with each layout during the session and do not alter the game's LA2 data.
 - **Command timeline:** actions that start, loop or stop other actions and reorder layers are simulated, so
@@ -128,7 +133,7 @@ python3 -m http.server 8000
 | Area | What it does |
 |---|---|
 | **Folders / Files** | Folders that contain LA2 data, then the layouts in the selected folder (loose files and `.dar` entries). Tick *subfolders* to include everything below. |
-| **Toolbar** | Action, play, frame, play mode, freeze last frame, fps, zoom (*fit* scales to the window), transparent / solid background colour, drag-to-move. |
+| **Toolbar** | Action, also play (extra looping actions), play, frame, play mode, freeze last frame, fps, zoom (*fit* scales to the window), transparent / solid background colour, drag-to-move. |
 | **Crop** | Enable a custom viewport, enter X / Y / W / H, select an area by dragging, or reset to the full layout. Applies to the live view and exports. |
 | **Export / Save** | Animation export, frame PNG, undo / redo / revert, save `.la2`, `.dar` and edited textures. |
 | **Objects** | The object tree. Untick to hide in the preview only; add new objects at the root. |

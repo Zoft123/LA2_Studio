@@ -34,6 +34,8 @@
   <section class="pane center">
     <div class="toolbar">
       <select id="action" aria-label="Action"><option value="-1">Initial state</option></select>
+      <select id="alsoAdd" aria-label="Also play" title="Play another action alongside, looping, as the game does on screens built from several actions"><option value="">+ also play…</option></select>
+      <span id="alsoList" class="also"></span>
       <button id="play" title="Play / stop (Space)" aria-label="Play">▶</button>
       <input type="range" id="frame" min="0" max="0" value="0" aria-label="Frame">
       <span id="flabel" class="dim mono">0</span>

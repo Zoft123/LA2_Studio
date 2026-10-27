@@ -51,11 +51,12 @@ test('colours are full-range RGB with alpha 0x80 = opaque', () => {
   assert.deepEqual(new State().color(), [1, 1, 1, 1]);  // nothing set: opaque white
 });
 
-test('the view grows to cover where the action ends, and returns to the initial view without one', () => {
+test('the view grows to cover what the action shows (not transparent objects), and returns to the initial view', () => {
   const initial = { x: 0, y: 0, w: 100, h: 50 };
   let at = null;
   const scene = { _bounds: initial, bounds() { return this._bounds; }, timeline: { length: () => 30 },
-    seek(f) { at = f; }, primitives: () => [{ pts: [[-40, 10], [-20, 30]] }] };
+    seek(f) { at = f; },
+    primitives: () => [{ pts: [[-40, 10], [-20, 30]], cols: [[1, 1, 1, 1]] }, { pts: [[-900, 0]], cols: [[1, 1, 1, 0]] }] };
   Scene.prototype.fitTimeline.call(scene);
   assert.equal(at, 30);
   assert.deepEqual(scene.bounds(), { x: -48, y: 0, w: 148, h: 50 });

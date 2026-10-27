@@ -155,9 +155,11 @@ export function trackLength(t) {
 
 // ---- timeline: which actions run when (commands), layer changes -------------------------------------------------
 export class Timeline {
-  /** mode for the first action: 'auto' (its loop flag), 'loop', 'once', 'pingpong'. */
-  constructor(la, root, mode = 'auto', horizon = 20000) {
+  /** mode for the first action: 'auto' (its loop flag), 'loop', 'once', 'pingpong'. `also`: actions that play
+   *  alongside it, looping from frame 0, for screens the game composes from several actions at once. */
+  constructor(la, root, mode = 'auto', { also = [], horizon = 20000 } = {}) {
     this.la = la; this.root = root; this.mode = mode; this.horizon = horizon;
+    this.also = also.filter(a => a !== root && la.actions[a]);
     this.compiled = new Map();
     this.len = la.actions.map((_, i) => Math.max(0, ...this.tracks(i).map(trackLength)));
     // schedule far enough for the first action (and a ping-pong round trip of it)
@@ -184,7 +186,8 @@ export class Timeline {
   }
   _schedule() {
     const rootLoop = { auto: this.loops(this.root), loop: true, once: false, pingpong: true }[this.mode] ?? false;
-    this.runs = [{ action: this.root, start: 0, stop: null, loop: rootLoop, root: true }];
+    this.runs = [{ action: this.root, start: 0, stop: null, loop: rootLoop, root: true },
+      ...this.also.map(action => ({ action, start: 0, stop: null, loop: true }))];
     this.events = []; this.layerOps = [];
     const heap = [];
     const addRun = run => {
@@ -200,7 +203,7 @@ export class Timeline {
       }
       heap.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
     };
-    addRun(this.runs[0]);
+    for (const run of [...this.runs]) addRun(run);
     while (heap.length) {
       const [g, , run, c, arg, obj] = heap.shift();
       if (run.stop !== null && g >= run.stop) continue;
@@ -573,16 +576,20 @@ export class Scene {
     if (!isFinite(lo[0])) { lo = [0, 0]; hi = [64, 64]; }
     return (this._bounds = { x: lo[0] - 8, y: lo[1] - 8, w: hi[0] - lo[0] + 16, h: hi[1] - lo[1] + 16 });
   }
-  /** Grow the fixed view to also cover the timeline's last frame: objects can finish outside the initial layout
-   *  (the lobby rule_anime's Sneaking Mission ends with Snake past its left edge). No timeline: the initial view. */
-  fitTimeline() {
+  /** Grow the fixed view to cover what the timeline shows along the way (32 samples and its last frame): objects
+   *  can move outside the initial layout (the lobby rule_anime's soldiers run in from its left edge and Snake ends
+   *  past it). Fully transparent primitives don't count. No timeline: the initial view. */
+  fitTimeline(samples = 32) {
     const b = this._initialBounds || (this._initialBounds = { ...this.bounds() });
     this._bounds = b;
     if (!this.timeline) return;
-    this.seek(this.timeline.length());
+    const n = this.timeline.length();
     let lo = [b.x, b.y], hi = [b.x + b.w, b.y + b.h];
-    for (const p of this.primitives()) for (const [x, y] of p.pts) {
-      lo = [Math.min(lo[0], x - 8), Math.min(lo[1], y - 8)]; hi = [Math.max(hi[0], x + 8), Math.max(hi[1], y + 8)];
+    for (let i = 1; i <= samples; i++) {
+      this.seek(Math.round(n * i / samples));
+      for (const p of this.primitives()) if (p.cols.some(c => c[3] > 0)) for (const [x, y] of p.pts) {
+        lo = [Math.min(lo[0], x - 8), Math.min(lo[1], y - 8)]; hi = [Math.max(hi[0], x + 8), Math.max(hi[1], y + 8)];
+      }
     }
     this._bounds = { x: lo[0], y: lo[1], w: hi[0] - lo[0], h: hi[1] - lo[1] };
   }
