@@ -9,7 +9,7 @@ Structure names follow the engine's own naming where it is known.
 - **Byte order:** big-endian on PS3. Metal Gear Arcade's LA2 files are also big-endian (its archives and textures
   are little-endian). A reader detects the order from the version field.
 - **Units:** positions and sizes are in 1/16 pixel; rotation uses 4096 per full turn; scale uses 256 = 1.0;
-  colours are RGBA bytes with 0x80 = 1.0 (doubled and clamped when drawn).
+  colours are RGBA bytes: RGB 0..255, alpha 0x80 = opaque (doubled and clamped when drawn).
 - **Names** (objects, actions, layers, textures, commands) are 24-bit string hashes:
   `x = ((x << 5) | (x >> 19)) & 0xFFFFFF; x = (x + byte) & 0xFFFFFF` for each byte.
 

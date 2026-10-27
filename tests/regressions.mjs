@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { playbackMode, exportSchedule } from '../js/engine/playback.js';
-import { Scene, Timeline } from '../js/engine/scene.js';
+import { Scene, Timeline, State } from '../js/engine/scene.js';
 import { Renderer } from '../js/engine/gl.js';
 import { VideoWriter, APNGWriter, cropDelta } from '../js/engine/export.js';
 import { unzlibSync } from '../js/vendor/fflate.js';
@@ -40,6 +40,28 @@ test('turning freeze off restores the selected timeline behavior', () => {
   scene.seek(timeline.length());
   assert.equal(timeline.runs[0].loop, true);
   assert.equal(scene.state.get(0).xy[0][0][0], 0);
+});
+
+test('colours are full-range RGB with alpha 0x80 = opaque', () => {
+  const st = new State();
+  st.rgba.set(0, [255, 154, 69, 128]);                // MGO2's orange: doubling RGB used to turn it khaki
+  assert.deepEqual(st.color(), [1, 154 / 255, 69 / 255, 1]);
+  st.rgba.set(0, [249, 89, 68, 64]);
+  assert.deepEqual(st.color().map(v => Math.round(v * 255)), [249, 89, 68, 128]);
+  assert.deepEqual(new State().color(), [1, 1, 1, 1]);  // nothing set: opaque white
+});
+
+test('the view grows to cover where the action ends, and returns to the initial view without one', () => {
+  const initial = { x: 0, y: 0, w: 100, h: 50 };
+  let at = null;
+  const scene = { _bounds: initial, bounds() { return this._bounds; }, timeline: { length: () => 30 },
+    seek(f) { at = f; }, primitives: () => [{ pts: [[-40, 10], [-20, 30]] }] };
+  Scene.prototype.fitTimeline.call(scene);
+  assert.equal(at, 30);
+  assert.deepEqual(scene.bounds(), { x: -48, y: 0, w: 148, h: 50 });
+  scene.timeline = null;
+  Scene.prototype.fitTimeline.call(scene);
+  assert.deepEqual(scene.bounds(), initial);
 });
 
 const samples = timing => Array.from({ length: timing.count }, (_, i) => timing.at(i));

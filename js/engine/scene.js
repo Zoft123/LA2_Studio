@@ -1,8 +1,8 @@
 // Playback engine: object state, action playback, the command timeline and draw-list generation, following libla
 // (the MGS4 engine's 2D layout library) as closely as it is understood.
 //
-//  - Positions are 1/16 px; rotation 4096 = full turn; scale 256 = 1.0; colours RGBA with 0x80 = 1.0 (doubled and
-//    clamped when drawn).
+//  - Positions are 1/16 px; rotation 4096 = full turn; scale 256 = 1.0; colours: RGB 0..255, alpha 0x80 = opaque (every
+//    colour table of the 271 MGO2 layouts stores white as 255,255,255 and no alpha above 0x80).
 //  - Draw order: layers by priority (initially their index; a layer whose status has bit 0 set is off), then
 //    objects in file order. Children inherit position, rotation, scale and colour from Nul / Ctrl parents.
 //  - Keys: set = apply a status block, morph = interpolate to it over n frames, wait = hold n frames,
@@ -16,12 +16,14 @@ export const COMMANDS = new Map(['StartAction', 'StartLoopAction', 'StopAction',
 const lerp = (a, b, t) => a + (b - a) * t;
 
 // ---- object state -------------------------------------------------------------------------------------------
+const WHITE = [0xFF, 0xFF, 0xFF, 0x80];   // no colour set: opaque white
+
 export class State {
   constructor() {
     this.visible = true;
     this.xy = [[[0, 0]]];
     this.wh = [[0, 0]];
-    this.rgba = new Map();          // (target << 12 | i) -> [r, g, b, a] (0x80 = 1.0)
+    this.rgba = new Map();          // (target << 12 | i) -> [r, g, b, a] (RGB 0..255, alpha 0x80 = opaque)
     this.texture = 0;
     this.uv = null;
     this.blend = 'normal';
@@ -63,7 +65,7 @@ export class State {
         for (const c of p.colors) {
           const lst = la.color_tbl[c.color] || [];
           lst.forEach((nc, i) => {
-            const key = (c.target << 12) | i, old = this.rgba.get(key) || [0x80, 0x80, 0x80, 0x80], out = old.slice();
+            const key = (c.target << 12) | i, old = this.rgba.get(key) || WHITE, out = old.slice();
             [8, 4, 2, 1].forEach((bit, ch) => { if (c.mask & bit) out[ch] = t < 1 ? lerp(old[ch], nc[ch], t) : nc[ch]; });
             this.rgba.set(key, out);
           });
@@ -89,10 +91,10 @@ export class State {
       }
     }
   }
-  /** Colour i of the entry set on `unit`, as 0..1 floats (0x80 = 1.0, doubled and clamped). */
+  /** Colour i of the entry set on `unit`, as 0..1 floats (alpha 0x80 = 1.0, doubled and clamped). */
   color(i = 0, unit = 0) {
-    const c = this.rgba.get((unit << 12) | i) || this.rgba.get(unit << 12) || this.rgba.get(i) || this.rgba.get(0) || [0x80, 0x80, 0x80, 0x80];
-    return [Math.min(255, c[0] * 2) / 255, Math.min(255, c[1] * 2) / 255, Math.min(255, c[2] * 2) / 255, Math.min(255, c[3] * 2) / 255];
+    const c = this.rgba.get((unit << 12) | i) || this.rgba.get(unit << 12) || this.rgba.get(i) || this.rgba.get(0) || WHITE;
+    return [c[0] / 255, c[1] / 255, c[2] / 255, Math.min(255, c[3] * 2) / 255];
   }
 }
 
@@ -570,5 +572,18 @@ export class Scene {
     [this.state, this.overlays, this.frame] = keep;
     if (!isFinite(lo[0])) { lo = [0, 0]; hi = [64, 64]; }
     return (this._bounds = { x: lo[0] - 8, y: lo[1] - 8, w: hi[0] - lo[0] + 16, h: hi[1] - lo[1] + 16 });
+  }
+  /** Grow the fixed view to also cover the timeline's last frame: objects can finish outside the initial layout
+   *  (the lobby rule_anime's Sneaking Mission ends with Snake past its left edge). No timeline: the initial view. */
+  fitTimeline() {
+    const b = this._initialBounds || (this._initialBounds = { ...this.bounds() });
+    this._bounds = b;
+    if (!this.timeline) return;
+    this.seek(this.timeline.length());
+    let lo = [b.x, b.y], hi = [b.x + b.w, b.y + b.h];
+    for (const p of this.primitives()) for (const [x, y] of p.pts) {
+      lo = [Math.min(lo[0], x - 8), Math.min(lo[1], y - 8)]; hi = [Math.max(hi[0], x + 8), Math.max(hi[1], y + 8)];
+    }
+    this._bounds = { x: lo[0], y: lo[1], w: hi[0] - lo[0], h: hi[1] - lo[1] };
   }
 }

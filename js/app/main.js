@@ -209,9 +209,10 @@ async function openFile(f, keep = null) {
 // ---- timeline / playback ---------------------------------------------------------------------------------------
 function loadTimeline() {
   const a = +$('#action').value, ev = $('#events');
-  if (!S.la || a < 0) { S.timeline = null; S.scene && S.scene.setTimeline(null); $('#frame').max = 0; $('#frame').value = 0; ev.hidden = true; return; }
+  if (!S.la || a < 0) { S.timeline = null; if (S.scene) { S.scene.setTimeline(null); S.scene.fitTimeline(); } $('#frame').max = 0; $('#frame').value = 0; ev.hidden = true; return; }
   S.timeline = new Timeline(S.la, a, currentPlaybackMode());
   S.scene.setTimeline(S.timeline);
+  S.scene.fitTimeline();
   const tl = S.timeline;
   $('#frame').max = tl.length();
   const label = i => 'action ' + i + (S.la.actionHash.has(i) ? ' #' + hex(S.la.actionHash.get(i)) : '');
@@ -839,8 +840,8 @@ function tabTables(P) {
     uv: (m.uv_tbl || []).map(l => l.map(c => { const r = new Reader(c, m.le); return [r.u16(0), r.u16(2)]; })),
     tex: (m.tex_tbl || []).map(([h, t]) => [hex(h), hex(t)]),
   };
-  const swatch = c => `<span class="swatch" style="background:rgba(${c[0] * 2},${c[1] * 2},${c[2] * 2},${Math.min(1, c[3] / 128)})"></span>`;
-  P.innerHTML = `<div class="section"><h3>Colours</h3><div class="dim small">R G B A, 0x80 = full. One entry holds a colour per vertex (Quad 4, Line 2…).</div>
+  const swatch = c => `<span class="swatch" style="background:rgba(${c[0]},${c[1]},${c[2]},${Math.min(1, c[3] / 128)})"></span>`;
+  P.innerHTML = `<div class="section"><h3>Colours</h3><div class="dim small">R G B 0–255, alpha 0x80 = opaque. One entry holds a colour per vertex (Quad 4, Line 2…).</div>
       <table>${rows.color.slice(0, 400).map((l, i) => `<tr><td class="k">${i}</td><td>${l.map(swatch).join(' ')} <span class="dim mono">${l.map(c => c.join(',')).join(' · ')}</span></td></tr>`).join('')}</table></div>
     <div class="section"><h3>Edit tables (JSON)</h3><div class="dim small">colour entries: lists of [R,G,B,A]; UV entries: lists of [u,v] texture pixels; textures: [TXN texture hash, TRI hash] in hex. Objects refer to entries by index: append to add, remove only unused ones at the end.</div>
       <textarea id="tbljson" spellcheck="false">${esc(JSON.stringify(rows, null, 1))}</textarea>
