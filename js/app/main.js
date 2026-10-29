@@ -194,7 +194,7 @@ async function openFile(f, keep = null) {
     if (!S.ws && S.tab === 'weapons') S.tab = 'objects';
     if (!keep) { S.sel = null; S.hideObj = new Set(); S.hideLayer = new Set(); }
     S.scene.hidden = S.hideObj; S.scene.hiddenLayers = S.hideLayer; S.scene.showGuides = !!settings.guides;
-    cropControls.open(f.id);
+    cropControls.open(f.id, flashStage(la, f.path));
     const pd = $('#action');
     pd.innerHTML = '<option value="-1">Initial state</option>' + la.actions.map((a, i) => {
       const h = la.actionHash.get(i);
@@ -245,6 +245,23 @@ $('#pmode').onchange = () => { stop(); loadTimeline(); render(); };
 // soldiers only appear once they stop running
 const GAME_LAYERS = [[0x2b7872, 0x925b6e]];
 const gameLayers = la => (GAME_LAYERS.find(hs => hs.every(h => la.named.has(h))) || []).map(h => la.named.get(h));
+// MGS4's Flash-converted movies (slotdat/slot_flash) are authored on a 320 × 180 px stage that the game draws
+// full screen: they sit in slot_flash folders and most carry a stage-sized Quad / RSprt at the origin (some with a
+// few px of overscan). Anything past the stage is off screen, so the view starts cropped to it (Reset shows all).
+const STAGE = { x: 0, y: 0, w: 320, h: 180 };
+function flashStage(la, path) {
+  if (/(^|\/)slot_flash\//i.test(path)) return STAGE;
+  for (const o of la.objects) {
+    if (o.type !== 4 && o.type !== 6) continue;
+    const xy = la.packets(o.index).find(p => p.name === 'xy');
+    const pts = xy && xy.lists.length === 1 && xy.lists[0].points;
+    if (!pts || pts.length !== 4) continue;
+    const xs = pts.map(p => p[0] / 16), ys = pts.map(p => p[1] / 16);
+    const x0 = Math.min(...xs), y0 = Math.min(...ys), w = Math.max(...xs) - x0, h = Math.max(...ys) - y0;
+    if (Math.abs(x0) <= 3 && Math.abs(y0) <= 3 && w >= 316 && w <= 328 && h >= 178 && h <= 186) return STAGE;
+  }
+  return null;
+}
 function drawAlso() {
   $('#alsoList').innerHTML = S.also.map(i => {
     const h = S.la.actionHash.get(i);

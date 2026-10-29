@@ -59,7 +59,9 @@ export class State {
     s.typing = this.typing.slice();
     return s;
   }
-  /** Apply packets; t < 1 = part of a morph (only interpolating packets act). at = global frame (typing start). */
+  /** Apply packets; t < 1 = part of a morph: positions, sizes, colours, scale and rotation interpolate, every other
+   *  change (show / hide, blend, texture, UV, text…) waits for the end (MGO2's MorphFunc handlers; the morph loop
+   *  applies every packet of the block whatever each handler returns). at = global frame (typing start). */
   apply(packets, la, t = 1, at = 0) {
     for (const p of packets) {
       const n = p.name;
@@ -88,7 +90,7 @@ export class State {
         }
       } else if (n === 'texture') { if (t >= 1) this.texture = p.value; }
       else if (n === 'uv') { if (t >= 1) this.uv = p.value; }
-      else if (n === 'blend') this.blend = p.blend || 'normal';
+      else if (n === 'blend') { if (t >= 1) this.blend = p.blend || 'normal'; }
       else if (n === 'scale') { const v = p.value & 0xFFFF; this.scale = t < 1 ? mix(this.scale, v, t) : v; }
       else if (n === 'rotate') { const v = p.values[0]; this.rotate = t < 1 ? mix(this.rotate, v, t) : v; }
       else if (t >= 1) {

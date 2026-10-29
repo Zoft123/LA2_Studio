@@ -56,9 +56,15 @@ usTriangleStripCount, usStringCount, usTypingCount) and usPad.
 | unitCount | u16 | units (TriangleStrip) |
 | layerIndex | u16 | layer |
 
-The engine dispatches on the **low byte** of the type word and accepts only 0–11. Some MGS4 layouts converted
-from Flash mark shapes with extra bits in that byte (for example `0x3016`: a Quad with bits 0x10, 0x1000, 0x2000);
-the game never draws those (they are mask / guide shapes), so LA2 Studio hides them unless asked to show them.
+Retail libla (MGO2, Metal Gear Arcade 2011 and 2015) dispatches on the **low 4 bits** of the type word; an MGS4 PS3
+debug build checks the whole low byte and rejects anything above 11. MGS4's Flash-converted layouts mark shapes with
+extra bits there (for example `0x3016`: a Quad with bits 0x10, 0x1000, 0x2000). Those are Flash mask / guide shapes:
+drawn, they cover the scene with flat shapes, so LA2 Studio hides them unless asked to show them (how retail MGS4
+skips them is not traced). In MGA's libla, 0x1000 / 0x2000 / 0x4000 make the object's draw packet rebuild every
+update.
+
+The Flash-converted movies (`slotdat/slot_flash`) are authored on a 320 × 180 px stage (5120 × 2880 units) that the
+game draws full screen; most start with a stage-sized Quad or RSprt at the origin.
 
 ### Object types
 
@@ -132,8 +138,10 @@ key `{u16 type, u16 size, data}`.
 
 Morph progress is `(now − start) / ticks`, clamped to 0…1, interpolating positions, sizes, colours, scale and
 rotation from the values the object had when the key began: `(1 − rate)·from + rate·to` in single precision, rounded
-half away from zero to whole units (MorphFuncVertex, MorphFuncRGBA, …). Show / hide apply when the progress reaches
-one. Status offsets may point inside a block (the packets from that point apply).
+half away from zero to whole units (MorphFuncVertex, MorphFuncRGBA, …). Every other change (show / hide, blend,
+texture, text, font, typing settings) applies when the progress reaches one; rotate acts on Nul objects only.
+Retail's morph loop applies every packet of the block whatever each handler returns (an MGS4 debug build stops at
+the first handler that returns −1). Status offsets may point inside a block (the packets from that point apply).
 
 ### Time and playback (libla)
 

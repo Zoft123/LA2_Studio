@@ -39,6 +39,8 @@ data is included in this repository.
   rotation units).
 - Mask / guide shapes in MGS4's Flash-converted layouts, which the game never draws, are hidden (they can be shown
   from Settings).
+- MGS4's Flash-converted movies (`slotdat/slot_flash`) open showing their 320 × 180 stage, the part the game puts on
+  screen; artwork waiting off stage stays out of view. **Reset** in the crop bar shows the whole layout.
 - Playback that follows the game's engine (libla): 300 ticks per second, updates in game-frame steps, actions started
   by commands on the same update grid, starts of already-playing actions ignored, layer commands with the engine's
   priority rules. Speed 0.1×–2×, loop, once and ping-pong modes, tick stepping and scrubbing.

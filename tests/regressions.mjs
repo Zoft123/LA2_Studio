@@ -307,3 +307,11 @@ test('Sprt / RSprt UVs are inset a quarter texel toward their centre; TriangleSt
   assert.deepEqual(scene._uv(st, 4, true).uv, [[0.25, 0.25], [31.75, 0.25], [31.75, 4.75], [0.25, 4.75]]);
   assert.deepEqual(scene._uv(st, 4).uv, [[0, 0], [32, 0], [32, 5], [0, 5]]);
 });
+
+test('a morph changes blend only when it completes, like show / hide (MGO2 MorphFunc handlers)', () => {
+  const st = new State();
+  st.apply([{ name: 'blend', blend: 'add' }], { color_tbl: [] }, 0.5);
+  assert.equal(st.blend, 'normal');
+  st.apply([{ name: 'blend', blend: 'add' }], { color_tbl: [] }, 1);
+  assert.equal(st.blend, 'add');
+});

@@ -22,7 +22,7 @@ export class CropControls {
       this.stop(); this.selecting = true; this.sync(); this.redraw();
     };
     this.reset.onclick = () => {
-      this.state.enabled = false; this.state.rect = cropRect(this.bounds());
+      this.state.enabled = false; this.state.rect = cropRect(this.bounds()); this.state.screen = false;
       this.cancel();
     };
     this.canvas.addEventListener('pointerdown', e => {
@@ -44,7 +44,7 @@ export class CropControls {
       e.stopImmediatePropagation();
       if (!this.drag || this.drag.pointerId !== e.pointerId) return;
       const rect = selectedCrop(this.drag.start, this.point(e), this.bounds());
-      if (rect) { this.state.rect = rect; this.state.enabled = true; this.cancel(); }
+      if (rect) { this.state.rect = rect; this.state.enabled = true; this.state.screen = false; this.cancel(); }
       else { this.release(); this.sync(); }
     });
     const interrupted = e => {
@@ -62,9 +62,10 @@ export class CropControls {
     this.sync();
   }
 
-  open(file) {
+  /** `screen`: the area the game shows ({x, y, w, h} layout px), cropped to by default; Reset shows everything. */
+  open(file, screen = null) {
     this.file = file;
-    if (!this.states.has(file)) this.states.set(file, { enabled: false, rect: cropRect(this.bounds()) });
+    if (!this.states.has(file)) this.states.set(file, screen ? { enabled: true, rect: cropRect(screen), screen: true } : { enabled: false, rect: cropRect(this.bounds()) });
     this.state = this.states.get(file);
     this.cancel(false);
   }
@@ -89,7 +90,7 @@ export class CropControls {
       field.setCustomValidity(valid ? '' : 'Enter a valid coordinate or a positive size.');
     }
     if (!rect) { this.hint.textContent = 'Enter valid coordinates and positive dimensions.'; return false; }
-    this.state.rect = rect; this.hint.textContent = `${rect.w} × ${rect.h} layout px · preview + exports`;
+    this.state.rect = rect; this.state.screen = false; this.hint.textContent = `${rect.w} × ${rect.h} layout px · preview + exports`;
     this.redraw(); return true;
   }
   sync() {
@@ -106,7 +107,7 @@ export class CropControls {
       field.disabled = !active || !this.state.enabled || this.selecting;
     }
     this.hint.textContent = this.selecting ? 'Drag an area on the full layout. Esc cancels.' :
-      this.state.enabled ? `${rect.w} × ${rect.h} layout px · preview + exports` : 'Preview + exports';
+      this.state.enabled ? `${rect.w} × ${rect.h} layout px${this.state.screen ? ' (the game screen)' : ''} · preview + exports` : 'Preview + exports';
   }
   drawGuide() {
     if (!this.drag) { this.guide.hidden = true; return; }
