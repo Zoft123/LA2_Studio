@@ -38,7 +38,7 @@
       <span id="alsoList" class="also"></span>
       <button id="play" title="Play / stop (Space)" aria-label="Play">▶</button>
       <input type="range" id="frame" min="0" max="0" value="0" aria-label="Frame">
-      <span id="flabel" class="dim mono">0</span>
+      <input id="frameNum" type="number" min="0" step="1" value="0" aria-label="Frame (tick)" title="Tick (1/300 s): type one and press Enter to jump there"><span id="flabel" class="dim mono">0.00 s</span>
       <label class="dim" title="auto = the action's loop flag">Play <select id="pmode"><option value="auto">auto</option><option value="loop">loop</option><option value="once">once</option><option value="pingpong">ping-pong</option></select></label>
       <label class="dim" title="Freeze / stop on the very last frame of the track for playback and export"><input type="checkbox" id="freezeEnd"> Freeze last frame</label>
       <label class="dim" title="Ticks per second. LA2 time is in ticks of 1/300 s; the game plays 300 per second (5 per 60 fps frame)">Speed <select id="fps"><option value="30">0.1×</option><option value="75">0.25×</option><option value="150">0.5×</option><option value="300" selected>1× (game)</option><option value="600">2×</option></select></label>

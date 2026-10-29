@@ -131,8 +131,9 @@ key `{u16 type, u16 size, data}`.
 | 8 | morph | `u32 ticks, u32` status-block offset | interpolate to a block over n ticks |
 
 Morph progress is `(now − start) / ticks`, clamped to 0…1, interpolating positions, sizes, colours, scale and
-rotation from the values the object had when the key began (rounded to whole units); show / hide apply when it reaches
-1. Status offsets may point inside a block (the packets from that point apply).
+rotation from the values the object had when the key began: `(1 − rate)·from + rate·to` in single precision, rounded
+half away from zero to whole units (MorphFuncVertex, MorphFuncRGBA, …). Show / hide apply when the progress reaches
+one. Status offsets may point inside a block (the packets from that point apply).
 
 ### Time and playback (libla)
 
@@ -174,10 +175,12 @@ Any other command hash is passed to the game as a signal.
 2. Within a layer, objects are drawn in file order.
 3. A child's position is rotated and scaled by its parent's matrix; rotations add, scales and colours multiply.
 4. Blend modes: normal `src·a + dst·(1−a)`, add `src·a + dst`, subtract `dst − src·a`, none = opaque.
-5. Text: glyphs are drawn at their font-cell size (1/16 px); x advances by each glyph's width; a line ends at
+5. Textures: UVs are kept in 1/16 texel; SetPacketSprt / SetPacketRSprt / SetPacketString move each UV 4 units
+   (a quarter texel) toward the middle of the object's UV rectangle (TriangleStrip UVs are used as they are).
+6. Text: glyphs are drawn at their font-cell size (1/16 px); x advances by each glyph's width; a line ends at
    `\n`, `\r` or their two-character escapes and moves down by the newline glyph's height; each line is aligned by
    the string's mode within its box width, with `space` added between letters (justify spreads them).
-6. Typing: in mode 1 one letter appears every *typeSpeed* ticks after the mode was set, each fading from the first
+7. Typing: in mode 1 one letter appears every *typeSpeed* ticks after the mode was set, each fading from the first
    to the end colour over *colorSpeed* ticks.
 
 ## Tables

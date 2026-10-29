@@ -33,6 +33,10 @@ data is included in this repository.
 - All object types: groups (Nul / Ctrl), Box, Sprt, RSprt, Triangle, Quad, Line, LineStrip, TriangleStrip,
   String and Typing (typewriter text with its reveal and colour fade).
 - Text laid out like the game: font-cell glyph sizes, multi-line strings, left / right / centre / justified.
+- Textures sampled like the game: libla moves every Sprt, RSprt and glyph UV a quarter texel toward the middle of
+  its rectangle, so sprites never pick up their neighbours in the atlas (no stray lines along sprite edges).
+- Morphs interpolate like libla: single-precision blend, rounded to whole units (1/16 px, colour steps, scale and
+  rotation units).
 - Mask / guide shapes in MGS4's Flash-converted layouts, which the game never draws, are hidden (they can be shown
   from Settings).
 - Playback that follows the game's engine (libla): 300 ticks per second, updates in game-frame steps, actions started
@@ -62,13 +66,17 @@ data is included in this repository.
   Shift + arrow keys.
 - **Text tab:** every string in the layout in one list (String / Typing objects and text set by action keys), with
   a filter. Type and press Enter to see the change at once, at any length; focusing a string highlights its object,
-  and characters the font cannot draw are flagged.
+  and characters the font cannot draw are flagged. A character palette shows every glyph of the string's font;
+  click one to insert it.
 - Edit every field of an object's state: position, size, colour index, texture, UV, blend, rotation, scale, text,
   text layout, visibility.
 - **Structural edits** with automatic rebuilding of every size, offset and header count:
   add new objects of any type, duplicate or delete subtrees, add / remove / resize raw packets, edit action keys,
   toggle an action's loop flag, edit the colour, UV and texture tables.
 - Undo / redo (Ctrl+Z / Ctrl+Y) for every edit.
+- **Edits survive a reload, crash or power cut:** unsaved edits (layouts and texture archives) are kept in the
+  browser and offered back the next time the same folder is opened. A kept edit is only applied to the file it was
+  made on (checked by a fingerprint of the original).
 - Stock files rebuild **byte for byte**, so an unedited save is identical to the original.
 
 ### Textures
@@ -139,12 +147,12 @@ python3 -m http.server 8000
 | Area | What it does |
 |---|---|
 | **Folders / Files** | Folders that contain LA2 data, then the layouts in the selected folder (loose files and `.dar` entries). Tick *subfolders* to include everything below. |
-| **Toolbar** | Action, also play (extra looping actions), play, frame, play mode, freeze last frame, speed (1× = the game's 300 ticks per second), zoom (*fit* scales to the window), transparent / solid background colour, drag-to-move. |
+| **Toolbar** | Action, also play (extra looping actions), play, frame (drag, or type a tick and press Enter), play mode, freeze last frame, speed (1× = the game's 300 ticks per second), zoom (*fit* scales to the window), transparent / solid background colour, drag-to-move. |
 | **Crop** | Enable a custom viewport, enter X / Y / W / H, select an area by dragging, or reset to the full layout. Applies to the live view and exports. |
 | **Export / Save** | Animation export, frame PNG, undo / redo / revert, save `.la2`, `.dar` and edited textures. |
 | **Objects** | The object tree. Untick to hide in the preview only; add new objects at the root. |
 | **Properties** | Fields of the selected object, duplicate / delete, add child objects, raw packet editor. |
-| **Text** | Every string in the file, editable in place (Enter applies, Shift+Enter new line, Esc restores), with a filter. |
+| **Text** | Every string in the file, editable in place (Enter applies, Shift+Enter new line, Esc restores), with a filter and the font's character palette. |
 | **Textures** | Textures with their UV rectangles; PNG download, replacement, wider texture search. |
 | **Tables** | Colour, UV and texture tables. |
 | **Action keys** | Tracks and keys of the selected action, with commands decoded; loop flag. |
@@ -154,7 +162,8 @@ python3 -m http.server 8000
 Ctrl+Z / Ctrl+Y undo / redo · `/` filter files · `o` open folder · Esc clear the selection.
 
 **Edits stay in the browser** until you save them: use **Save .la2**, **Save .dar** or **Save textures** to
-download the edited files, then copy them into your game folder (keep a backup of the originals).
+download the edited files, then copy them into your game folder (keep a backup of the originals). Until then they
+are also kept in the browser's storage, so reopening the same folder after a reload or crash offers them back.
 
 To crop, click **Select area**, then drag a rectangle on the full layout. Selection pauses playback;
 press Play again to watch the cropped animation. **Esc** or **Cancel crop** keeps the previous crop.
@@ -211,11 +220,10 @@ Planned and likely future updates:
 - **Action authoring:** create actions and tracks, and a visual keyframe timeline instead of the key table.
 - **Visual UV editor** on the texture view (drag UV rectangles).
 - **Layer management:** create, reorder and toggle layers, and assign objects to them.
-- **Session persistence:** keep edits across reloads (IndexedDB) and write them straight back into the opened
-  folder where the browser allows it.
+- **Write back:** save edits straight into the opened folder where the browser allows it.
 - **Name dictionary:** readable names for object, action and texture hashes contributed by the community.
 - **More exports:** GIF and sprite-sheet export, audio-free MOV / ProRes-style intermediates if browsers gain them.
-- **Font tools:** glyph table view and editing.
+- **Font tools:** glyph editing.
 
 Issues and pull requests are welcome.
 
@@ -232,7 +240,8 @@ js/formats/               la2.js (reader), model.js (writer and edits), archives
                           textures.js (TXN / DLD / DXT decoding), dxtenc.js (DXT encoding), mgo2crypt.js
 js/engine/                scene.js (state, playback, timeline, draw list), gl.js (WebGL renderer), export.js,
                           playback.js (play modes, export frame schedule), viewport.js (crop geometry)
-js/app/                   main.js (UI), library.js (folders, decryption, texture lookup), crop.js, texedit.js
+js/app/                   main.js (UI), library.js (folders, decryption, texture lookup), crop.js, texedit.js,
+                          session.js (unsaved edits kept in IndexedDB)
 docs/FORMAT.md            format reference
 tests/check.mjs           `npm test`: playback, export, crop and app regression tests
 tests/run.mjs             round-trip tests against your own game files

@@ -13,6 +13,7 @@ import { WebPWriter, APNGWriter, VideoWriter, VIDEO_FORMATS, videoFormats, encod
 import { hex, toHex, fromHex, latin1, Reader } from '../core/bin.js';
 import { replaceTexture } from './texedit.js';
 import { zipSync } from '../vendor/fflate.js';
+import * as session from './session.js';
 import { WeaponSelect, isWeaponSelect, defaultConfig, parseList, ROWS, CHARACTERS, ICON_NAMES, UNIQUE_OWNER } from './weaponselect.js';
 
 const $ = s => document.querySelector(s);
@@ -26,6 +27,7 @@ const S = {
   also: [],                // actions played alongside the selected one (looping)
   sel: null, tab: 'objects', expanded: new Set(), hideObj: new Set(), hideLayer: new Set(),
   textFocus: null, textFilter: '',  // Text tab: the string being edited ({i, caret}) and the filter
+  glyphFont: 0, glyphsOpen: false,  // Text tab: font shown in the character palette, palette open
   edits: new Map(),        // file id -> {bytes, undo: [], redo: []}
   texEdits: new Map(),     // dlz path -> edited DLD bytes
   playing: false, gen: 0,
@@ -73,6 +75,7 @@ async function openFS(fs) {
     const lib = new Library(fs, settings);
     const n = await lib.scan(k => { $('#busy').textContent = `reading folder… ${k} files`; });
     S.lib = lib; S.dir = null; S.files = []; closeFile();
+    await restoreSession(fs.name);
     $('#info').textContent = `${fs.name} · ${n} files`;
     S.expanded = new Set([fs.name]);
     drawTree();
@@ -165,7 +168,12 @@ async function openFile(f, keep = null) {
   stop();
   busy(1, 'opening ' + basename(f.id) + '…');
   try {
-    const ed = S.edits.get(f.id);
+    let ed = S.edits.get(f.id);
+    if (ed && ed.restored) {             // restored from an earlier session: only if it is still the same file
+      const orig = await S.lib.la2Bytes(f);
+      if (session.fingerprint(orig) === ed.fp) { ed.orig = orig; ed.restored = false; }
+      else { S.edits.delete(f.id); ed = null; msg(`The kept edit of ${f.id} belongs to a different file and was dropped`, true); }
+    }
     const bytes = ed ? ed.bytes : await S.lib.la2Bytes(f);
     if (g !== S.gen) return;
     const la = new LA2(bytes);
@@ -254,6 +262,12 @@ $('#alsoList').onclick = e => {
   if (b) { S.also = S.also.filter(i => i !== +b.dataset.rm); alsoChanged(); }
 };
 $('#frame').oninput = () => render();
+$('#frameNum').onchange = () => {
+  const fr = $('#frame'), v = Math.round(+$('#frameNum').value);
+  if (!Number.isFinite(v)) return;
+  stop(); fr.value = Math.max(0, Math.min(+fr.max, v)); $('#frameNum').blur(); render();
+};
+$('#frameNum').onkeydown = e => { if (e.key === 'Enter') $('#frameNum').onchange(); };
 $('#scale').onchange = () => render();
 
 // view preferences (freeze, background) persist per browser
@@ -325,7 +339,8 @@ function subtree(id) {
 function render(dragOffset = null, withOutline = true) {
   if (!S.scene || !renderer) return;
   const f = +$('#frame').value;
-  $('#flabel').textContent = `${f} · ${(f / TICKS_PER_SECOND).toFixed(2)} s`;
+  if (document.activeElement !== $('#frameNum')) $('#frameNum').value = f;
+  $('#flabel').textContent = `${(f / TICKS_PER_SECOND).toFixed(2)} s`;
   if (S.timeline) S.scene.seek(f); else S.scene.frame = 0;
   const prims = S.scene.primitives();
   S.lastPrims = prims;
@@ -393,13 +408,17 @@ async function edit(fn, label = 'edited') {
   if (r === false) return;
   const after = m.build();
   new LA2(after);                                          // must still parse
-  const e = S.edits.get(S.file.id) || { bytes: null, undo: [], redo: [], orig: S.bytes };
+  const e = editEntry();
   e.undo.push(before); if (e.undo.length > 100) e.undo.shift();
   e.redo = []; e.bytes = after;
   S.edits.set(S.file.id, e);
   await reopen();
   msg(label);
   return r;
+}
+/** The current file's edit record, created on its first edit (with a fingerprint of the original for restores). */
+function editEntry() {
+  return S.edits.get(S.file.id) || { bytes: null, undo: [], redo: [], orig: S.bytes, fp: session.fingerprint(S.bytes) };
 }
 async function reopen() {
   await openFile(S.file, { action: $('#action').value, frame: +$('#frame').value, sel: S.sel, tab: S.tab });
@@ -444,6 +463,29 @@ function download(blob, name) {
 function updateSaveButtons() {
   $('#saveTex').disabled = !S.texEdits.size;
   $('#revert').disabled = !(S.file && S.edits.has(S.file.id));
+  saveSession();
+}
+// unsaved edits are mirrored to IndexedDB (per opened folder) so a reload or crash does not lose them
+let sessionT = 0;
+function saveSession() {
+  const folder = S.lib?.fs?.name;
+  if (!folder) return;
+  clearTimeout(sessionT);
+  sessionT = setTimeout(() => session.sync(folder, S.edits, S.texEdits), 300);
+}
+async function restoreSession(folder) {
+  const saved = await session.load(folder);
+  if (!saved.length) return;
+  const files = saved.filter(s => s.kind === 'la2').length, tex = saved.length - files;
+  const when = new Date(Math.max(...saved.map(s => s.time))).toLocaleString();
+  const what = [files && `${files} layout${files > 1 ? 's' : ''}`, tex && `${tex} texture archive${tex > 1 ? 's' : ''}`].filter(Boolean).join(' and ');
+  if (!confirm(`Unsaved edits to ${what} in “${folder}” were kept from ${when}.\n\nRestore them? (Cancel discards them.)`)) { session.clear(folder); return; }
+  for (const s of saved) {
+    if (s.kind === 'la2') S.edits.set(s.id, { bytes: s.bytes, undo: [], redo: [], orig: null, fp: s.fp, restored: true });
+    else S.texEdits.set(s.id, s.bytes);
+  }
+  updateSaveButtons();
+  msg(`restored unsaved edits to ${what}`);
 }
 $('#saveLa2').onclick = () => { if (S.file) download(new Blob([current()]), basename(S.file.entry || S.file.path)); };
 $('#saveDar').onclick = async () => {
@@ -752,7 +794,7 @@ function bindFields(P) {
 /** Fixed-size field: patch in place, recorded like any other edit. */
 async function patchEdit(off, fmt, v, label = 'saved') {
   const before = current(), after = patch(new LA2(before), off, fmt, v);
-  const e = S.edits.get(S.file.id) || { bytes: null, undo: [], redo: [], orig: S.bytes };
+  const e = editEntry();
   e.undo.push(before); e.redo = []; e.bytes = after;
   S.edits.set(S.file.id, e);
   await reopen(); msg(label);
@@ -825,7 +867,7 @@ function tabText(P) {
     const k = nth.get(t.block) || 0; nth.set(t.block, k + 1);
     const fid = fontId(t.block) ?? (owner ? fontId(owner.index) : undefined) ?? 1;
     const font = la.fonts[fid > 0 ? fid - 1 : 0] || la.fonts[0], s = latin1.decode(t.text);
-    return { ...t, i, nth: k, s, owner, uses, missing: font ? missingGlyphs(font, s) : [] };
+    return { ...t, i, nth: k, s, owner, uses, font: la.fonts.indexOf(font), missing: font ? missingGlyphs(font, s) : [] };
   });
   const actName = a => `action ${a}${la.actionHash.has(a) ? ' #' + hex(la.actionHash.get(a)) : ''}`;
   const where = r => r.block < nobj ? 'initial state' : r.uses.length ? 'set by ' + r.uses.map(u => `<a data-act="${u.action}">${actName(u.action)}</a>`).join(', ') : `block ${r.block} (no key uses it)`;
@@ -833,6 +875,9 @@ function tabText(P) {
   P.innerHTML = `<div class="section"><div class="addrow"><input id="textFilter" placeholder="Filter text…" aria-label="Filter text" style="flex:1;width:auto"> <span class="dim small" id="textCount"></span></div>
       <div class="dim small">Every string in the layout: String / Typing text and text that action keys set. Enter applies (any length),
       Shift+Enter starts a new line, Esc restores; each change is one undo step. Click a name to open its properties.</div></div>` +
+    (la.fonts.length ? `<details class="section" id="glyphs"${S.glyphsOpen ? ' open' : ''}><summary class="small">Font characters</summary>
+      <div class="addrow small">font <select id="glyphFont">${la.fonts.map((f, i) => `<option value="${i}">${i + 1} · #${hex(f.hash)} · ${f.glyphs.size} glyphs</option>`).join('')}</select>
+      <span class="dim">click one to insert it into the string being edited</span></div><div class="glyphs" id="glyphList"></div></details>` : '') +
     (rows.length ? rows.map(r => `<div class="trow" data-ti="${r.i}"><div class="tmeta">${label(r)} · ${where(r)}</div>
       <textarea data-ti="${r.i}" rows="${Math.min(6, r.s.split('\n').length)}" spellcheck="false" aria-label="Text ${r.i + 1}"></textarea>
       ${r.missing.length ? `<div class="warn small">not in the font, not drawn: ${r.missing.map(c => esc(showChar(c))).join(' ')}</div>` : ''}</div>`).join('')
@@ -860,10 +905,28 @@ function tabText(P) {
     // focus picks the object in the preview; it comes back after the edit re-renders this tab
     ta.onfocus = () => {
       if (S.textFocus?.i !== r.i) S.textFocus = { i: r.i, caret: null };
+      if (glyphFont && r.font >= 0 && +glyphFont.value !== r.font) { glyphFont.value = String(r.font); S.glyphFont = r.font; drawGlyphs(); }
       if (r.owner && S.sel !== r.owner.index) { S.sel = r.owner.index; render(); }
     };
     ta.onblur = e => { if (!e.relatedTarget?.matches?.('textarea[data-ti]')) S.textFocus = null; };
   });
+  const glyphFont = $('#glyphFont');
+  const drawGlyphs = () => {
+    const keys = [...la.fonts[+glyphFont.value].glyphs.keys()].filter(k => k !== '\n' && k !== '\r');
+    $('#glyphList').innerHTML = keys.map((k, n) => `<button class="glyph" data-g="${n}" title="${esc([...k].map(c => '0x' + c.charCodeAt(0).toString(16)).join(' '))}">${esc(showChar(k))}</button>`).join('');
+    $('#glyphList').onmousedown = e => e.preventDefault();          // keep the string's caret
+    $('#glyphList').onclick = e => {
+      const b = e.target.closest('[data-g]'), ta = document.activeElement;
+      if (!b || !ta?.matches?.('textarea[data-ti]')) { if (b) msg('Click into a string first, then pick a character'); return; }
+      ta.setRangeText(keys[+b.dataset.g], ta.selectionStart, ta.selectionEnd, 'end');
+    };
+  };
+  if (glyphFont) {
+    glyphFont.value = String(Math.min(S.glyphFont || 0, la.fonts.length - 1));
+    glyphFont.onchange = () => { S.glyphFont = +glyphFont.value; drawGlyphs(); };
+    $('#glyphs').ontoggle = () => { S.glyphsOpen = $('#glyphs').open; };
+    drawGlyphs();
+  }
   const filter = $('#textFilter');
   const applyFilter = () => {
     const w = filter.value.toLowerCase();

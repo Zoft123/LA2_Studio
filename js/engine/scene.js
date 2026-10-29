@@ -14,6 +14,21 @@ export const COMMANDS = new Map(['StartAction', 'StartLoopAction', 'StopAction',
   'SwapLayer', 'OffLayer', 'Name'].map(n => [strcode(n), n]));
 
 const lerp = (a, b, t) => a + (b - a) * t;
+// libla's morphs (MorphFuncVertex / Size / RGBA / Scale / Rotate): (1 − rate)·from + rate·to in single precision,
+// rounded half away from zero to whole units (1/16 px, colour steps, scale and rotation units)
+const f32 = Math.fround;
+const mix = (a, b, t) => {
+  const v = f32(f32(f32(1 - t) * a) + f32(f32(t) * b));
+  return v < 0 ? Math.ceil(v - 0.5) : Math.floor(v + 0.5);
+};
+// SetPacketSprt / RSprt / String move each UV a quarter texel (4 of libla's 1/16-texel units) toward the centre of
+// the UV rectangle, so filtering never reaches the neighbouring atlas texels (or, at an edge, the other side)
+const UV_INSET = 0.25;
+function insetUV(uv) {
+  const cx = uv.reduce((s, p) => s + p[0], 0) / uv.length, cy = uv.reduce((s, p) => s + p[1], 0) / uv.length;
+  const step = (v, c) => v < c ? v + UV_INSET : v > c ? v - UV_INSET : v;
+  return uv.map(([u, v]) => [step(u, cx), step(v, cy)]);
+}
 
 // ---- object state -------------------------------------------------------------------------------------------
 const WHITE = [0xFF, 0xFF, 0xFF, 0x80];   // no colour set: opaque white
@@ -53,28 +68,29 @@ export class State {
       else if (n === 'xy') {
         let nw = p.lists.map(l => l.points.map(q => q.slice()));
         if (t < 1 && nw.length === this.xy.length)
-          nw = nw.map((nl, i) => nl.length === this.xy[i].length ? nl.map((q, k) => [lerp(this.xy[i][k][0], q[0], t), lerp(this.xy[i][k][1], q[1], t)]) : nl);
+          nw = nw.map((nl, i) => nl.length === this.xy[i].length ? nl.map((q, k) => [mix(this.xy[i][k][0], q[0], t), mix(this.xy[i][k][1], q[1], t)]) : nl);
         this.xy = nw;
       } else if (n === 'xy_add') {
-        this.xy = this.xy.map((o, i) => p.lists[i] ? o.map((q, k) => p.lists[i].points[k] ? [q[0] + p.lists[i].points[k][0] * t, q[1] + p.lists[i].points[k][1] * t] : q) : o);
+        const add = (v, d) => t < 1 ? mix(v, v + d, t) : v + d;
+        this.xy = this.xy.map((o, i) => p.lists[i] ? o.map((q, k) => p.lists[i].points[k] ? [add(q[0], p.lists[i].points[k][0]), add(q[1], p.lists[i].points[k][1])] : q) : o);
       } else if (n === 'wh') {
         let nw = p.values.map(v => v.slice());
-        if (t < 1 && nw.length === this.wh.length) nw = nw.map((v, i) => [lerp(this.wh[i][0], v[0], t), lerp(this.wh[i][1], v[1], t)]);
+        if (t < 1 && nw.length === this.wh.length) nw = nw.map((v, i) => [mix(this.wh[i][0], v[0], t), mix(this.wh[i][1], v[1], t)]);
         this.wh = nw;
       } else if (n === 'rgba') {
         for (const c of p.colors) {
           const lst = la.color_tbl[c.color] || [];
           lst.forEach((nc, i) => {
             const key = (c.target << 12) | i, old = this.rgba.get(key) || WHITE, out = old.slice();
-            [8, 4, 2, 1].forEach((bit, ch) => { if (c.mask & bit) out[ch] = t < 1 ? lerp(old[ch], nc[ch], t) : nc[ch]; });
+            [8, 4, 2, 1].forEach((bit, ch) => { if (c.mask & bit) out[ch] = t < 1 ? mix(old[ch], nc[ch], t) : nc[ch]; });
             this.rgba.set(key, out);
           });
         }
       } else if (n === 'texture') { if (t >= 1) this.texture = p.value; }
       else if (n === 'uv') { if (t >= 1) this.uv = p.value; }
       else if (n === 'blend') this.blend = p.blend || 'normal';
-      else if (n === 'scale') { const v = p.value & 0xFFFF; this.scale = t < 1 ? lerp(this.scale, v, t) : v; }
-      else if (n === 'rotate') { const v = p.values[0]; this.rotate = t < 1 ? lerp(this.rotate, v, t) : v; }
+      else if (n === 'scale') { const v = p.value & 0xFFFF; this.scale = t < 1 ? mix(this.scale, v, t) : v; }
+      else if (n === 'rotate') { const v = p.values[0]; this.rotate = t < 1 ? mix(this.rotate, v, t) : v; }
       else if (t >= 1) {
         if (n === 'text') this.text = p.text;
         else if (n === 'text_layout') this.layout = p.values.slice();
@@ -464,13 +480,13 @@ export class Scene {
       } else if (t === 2 || t === 3) {
         const [w, h] = st.wh[0] || [0, 0];
         const pts = tf([[x, y], [x + w, y], [x + w, y + h], [x, y + h]].map(([a, b]) => [a / 16, b / 16]));
-        const tex = t === 3 ? this._uv(st, 4) : null;
+        const tex = t === 3 ? this._uv(st, 4, true) : null;
         emit(o, { kind: 'fan', pts, uv: tex && tex.uv, tex: tex && tex.tex, cols: Array(4).fill(oc), blend: st.blend, id });
       } else if (t >= 4 && t <= 8) {
         const flat = st.xy.flat();
         if (flat.length) {
           const pts = tf(flat.map(([a, b]) => [a / 16, b / 16]));
-          const tex = t === 4 ? this._uv(st, pts.length) : null;
+          const tex = t === 4 ? this._uv(st, pts.length, true) : null;
           const cols = flat.map((_, i) => (t === 4 ? own : st.color(i)).map((v, c) => v * col[c]));
           emit(o, { kind: t === 7 || t === 8 ? 'lines' : 'fan', pts, uv: tex && tex.uv, tex: tex && tex.tex, cols, blend: st.blend, id });
         }
@@ -497,7 +513,8 @@ export class Scene {
     return prims;
   }
 
-  _uv(st, n) {
+  /** Texture and UVs (atlas px) of a textured object; `inset` for Sprt / RSprt (TriangleStrip UVs are used as is). */
+  _uv(st, n, inset = false) {
     if (!st.texture) return null;
     const row = this.la.tex_tbl[st.texture - 1];
     if (!row) return null;
@@ -509,7 +526,7 @@ export class Scene {
       const [[u0, v0], [u1, v1]] = u;
       u = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
     }
-    return { tex: row[0], uv: u };
+    return { tex: row[0], uv: inset ? insetUV(u) : u };
   }
 
   /** CreateLetter: glyphs at font-cell size (1/16 px), x advancing by glyph width; lines end at \n, \r or the
@@ -585,7 +602,7 @@ export class Scene {
       if (info) {
         const tw = info.w || info.iw, th = info.h || info.ih;
         const U0 = info.ox + u0 / 65535 * tw, U1 = info.ox + u1 / 65535 * tw, V0 = info.oy + v0 / 65535 * th, V1 = info.oy + v1 / 65535 * th;
-        uv = [[U0, V0], [U1, V0], [U1, V1], [U0, V1]];
+        uv = insetUV([[U0, V0], [U1, V0], [U1, V1], [U0, V1]]);
       }
       out.push({ kind: 'fan', pts, uv, tex: info ? row[0] : null, cols: Array(4).fill(cols[k]), blend: st.blend, id: o.id });
     });

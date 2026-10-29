@@ -290,3 +290,20 @@ test('the Text tab lists every string and edits keep the others intact', () => {
   assert.deepEqual(after.texts().map(t => latin1.decode(t.text)), ['RULE & MAPS\n', 'MAP']);
   assert.equal(after.keyTargets(new Set([1])).size, 0);
 });
+
+test('morphs round to whole units half away from zero, like libla', () => {
+  const st = new State();
+  st.xy = [[[0, 0]]];
+  st.apply([{ name: 'xy', lists: [{ points: [[3, -3]] }] }], { color_tbl: [] }, 0.5);
+  assert.deepEqual(st.xy, [[[2, -2]]]);
+  st.rotate = 0; st.apply([{ name: 'rotate', values: [1001, 1] }], { color_tbl: [] }, 0.5);
+  assert.equal(st.rotate, 501);
+});
+
+test('Sprt / RSprt UVs are inset a quarter texel toward their centre; TriangleStrip UVs are not', () => {
+  const la = { objects: [], nblocks: 0, layers: [], tex_tbl: [[0xabc, 0]], uv_tbl: [[[0, 0], [32, 5]]], version: 0x10009 };
+  const scene = new Scene(la, { lookup: () => ({ w: 64, h: 64, ox: 0, oy: 0 }) });
+  const st = new State(); st.texture = 1; st.uv = 0;
+  assert.deepEqual(scene._uv(st, 4, true).uv, [[0.25, 0.25], [31.75, 0.25], [31.75, 4.75], [0.25, 4.75]]);
+  assert.deepEqual(scene._uv(st, 4).uv, [[0, 0], [32, 0], [32, 5], [0, 5]]);
+});
