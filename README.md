@@ -60,6 +60,9 @@ data is included in this repository.
 ### Editing
 - Click an object in the preview (or the object tree) to select it; drag it to move, or nudge with
   Shift + arrow keys.
+- **Text tab:** every string in the layout in one list (String / Typing objects and text set by action keys), with
+  a filter. Type and press Enter to see the change at once, at any length; focusing a string highlights its object,
+  and characters the font cannot draw are flagged.
 - Edit every field of an object's state: position, size, colour index, texture, UV, blend, rotation, scale, text,
   text layout, visibility.
 - **Structural edits** with automatic rebuilding of every size, offset and header count:
@@ -141,6 +144,7 @@ python3 -m http.server 8000
 | **Export / Save** | Animation export, frame PNG, undo / redo / revert, save `.la2`, `.dar` and edited textures. |
 | **Objects** | The object tree. Untick to hide in the preview only; add new objects at the root. |
 | **Properties** | Fields of the selected object, duplicate / delete, add child objects, raw packet editor. |
+| **Text** | Every string in the file, editable in place (Enter applies, Shift+Enter new line, Esc restores), with a filter. |
 | **Textures** | Textures with their UV rectangles; PNG download, replacement, wider texture search. |
 | **Tables** | Colour, UV and texture tables. |
 | **Action keys** | Tracks and keys of the selected action, with commands decoded; loop flag. |

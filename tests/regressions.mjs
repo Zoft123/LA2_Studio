@@ -6,6 +6,9 @@ import { Renderer } from '../js/engine/gl.js';
 import { VideoWriter, APNGWriter, cropDelta } from '../js/engine/export.js';
 import { unzlibSync } from '../js/vendor/fflate.js';
 import { Muxer, ArrayBufferTarget } from '../js/vendor/webm-muxer.js';
+import { LA2 } from '../js/formats/la2.js';
+import { Model } from '../js/formats/model.js';
+import { latin1 } from '../js/core/bin.js';
 
 // A looping track sets x=0, moves to x=160, then holds its final position.
 const track = {
@@ -272,4 +275,18 @@ test('layer commands follow libla priorities, including the no-shift case', () =
   assert.deepEqual(ops([{ frame: 1, op: 'OffLayer', object: 1, layer: 0 }]).off, [false, true, false]);
   assert.deepEqual(ops([{ frame: 1, op: 'OffLayer', object: 1, layer: 0 }, { frame: 2, op: 'OnLayer', object: 1, layer: 0 }]).off,
     [false, false, false]);
+});
+
+test('the Text tab lists every string and edits keep the others intact', () => {
+  const seed = new Uint8Array(96);
+  new DataView(seed.buffer).setUint32(0, 0x10008); new DataView(seed.buffer).setUint32(4, 52);
+  const m = new Model(seed);
+  m.addObject(2, {}); m.addObject(10, { text: 'RULE\n' }); m.addObject(11, { text: 'MAP' });
+  const la = new LA2(m.build());
+  assert.deepEqual(la.texts().map(t => [t.block, latin1.decode(t.text)]), [[1, 'RULE\n'], [2, 'MAP']]);
+  const e = new Model(la.data);
+  e.setText(1, 'RULE & MAPS\n');
+  const after = new LA2(e.build());
+  assert.deepEqual(after.texts().map(t => latin1.decode(t.text)), ['RULE & MAPS\n', 'MAP']);
+  assert.equal(after.keyTargets(new Set([1])).size, 0);
 });

@@ -25,6 +25,7 @@ const S = {
   la: null, bytes: null, scene: null, timeline: null,
   also: [],                // actions played alongside the selected one (looping)
   sel: null, tab: 'objects', expanded: new Set(), hideObj: new Set(), hideLayer: new Set(),
+  textFocus: null, textFilter: '',  // Text tab: the string being edited ({i, caret}) and the filter
   edits: new Map(),        // file id -> {bytes, undo: [], redo: []}
   texEdits: new Map(),     // dlz path -> edited DLD bytes
   playing: false, gen: 0,
@@ -624,7 +625,7 @@ function showTab() {
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === S.tab));
   const P = $('#panel');
   if (!S.la) { P.innerHTML = '<div class="pad dim">Open a file to inspect it.</div>'; return; }
-  ({ objects: tabObjects, props: tabProps, textures: tabTextures, tables: tabTables, keys: tabKeys, file: tabFile, weapons: tabWeapons })[S.tab](P);
+  ({ objects: tabObjects, props: tabProps, text: tabText, textures: tabTextures, tables: tabTables, keys: tabKeys, file: tabFile, weapons: tabWeapons })[S.tab](P);
 }
 const OBJ_TYPE_LABELS = { 0: 'Nul (group)', 2: 'Box', 3: 'Sprt (sprite)', 4: 'RSprt (4-point sprite)', 5: 'Triangle', 6: 'Quad',
   7: 'Line', 8: 'LineStrip', 9: 'TriangleStrip', 10: 'String' };
@@ -745,13 +746,16 @@ function bindFields(P) {
       if (block >= 0) await edit(m => m.setText(block, v) || false, 'text changed');
       return;
     }
-    // fixed-size field: patch in place, recorded like any other edit
-    const before = current(), la = new LA2(before), after = patch(la, off, fmt, v);
-    const e = S.edits.get(S.file.id) || { bytes: null, undo: [], redo: [], orig: S.bytes };
-    e.undo.push(before); e.redo = []; e.bytes = after;
-    S.edits.set(S.file.id, e);
-    await reopen(); msg('saved');
+    await patchEdit(off, fmt, v);
   });
+}
+/** Fixed-size field: patch in place, recorded like any other edit. */
+async function patchEdit(off, fmt, v, label = 'saved') {
+  const before = current(), after = patch(new LA2(before), off, fmt, v);
+  const e = S.edits.get(S.file.id) || { bytes: null, undo: [], redo: [], orig: S.bytes };
+  e.undo.push(before); e.redo = []; e.bytes = after;
+  S.edits.set(S.file.id, e);
+  await reopen(); msg(label);
 }
 
 function tabProps(P) {
@@ -791,6 +795,99 @@ function tabProps(P) {
 function pkRow(type, hexData, names) {
   return `<tr><td><select class="pt">${names.map(([v, n]) => `<option value="${v}"${+v === type ? ' selected' : ''}>${v} ${n}</option>`).join('')}</select></td>
     <td><input class="ph mono" value="${hexData}"></td><td><button class="pdel" title="remove">×</button></td></tr>`;
+}
+
+// ---- Text: every string in the file, edited in place ---------------------------------------------------------------
+/** Characters of `s` the font has no glyph for, tokenised like Scene.layout (longest code first, line breaks skipped). */
+function missingGlyphs(font, s) {
+  const miss = new Set();
+  for (let i = 0; i < s.length;) {
+    const two = s.substr(i, 2);
+    if (s[i] === '\n' || s[i] === '\r') { i++; continue; }
+    if (two === '\\n' || two === '\\r') { i += 2; continue; }
+    const n = [4, 3, 2, 1].find(k => font.glyphs.has(s.substr(i, k)));
+    if (n) i += n; else miss.add(s[i++]);
+  }
+  return [...miss];
+}
+const showChar = c => { const v = c.charCodeAt(0); return c === ' ' ? 'space' : v < 0x21 || (v >= 0x7F && v < 0xA1) ? '\\x' + v.toString(16).padStart(2, '0') : c; };
+function tabText(P) {
+  const la = S.la, focus = S.textFocus, texts = la.texts(), nobj = la.objects.length;
+  const byId = new Map(la.objects.map(o => [o.id, o]));
+  // strings in key target blocks belong to the objects of the tracks whose set / morph keys point at them
+  const later = new Set(texts.filter(t => t.block >= nobj).map(t => t.block));
+  const keyed = later.size ? la.keyTargets(later) : new Map();
+  const fontId = b => la.packets(b).find(p => p.name === 'text_layout')?.values[2];
+  const nth = new Map();
+  const rows = texts.slice(0, 3000).map((t, i) => {
+    const uses = t.block < nobj ? [] : keyed.get(t.block) || [];
+    const owner = t.block < nobj ? la.objects[t.block] : uses.length ? byId.get(uses[0].object) : null;
+    const k = nth.get(t.block) || 0; nth.set(t.block, k + 1);
+    const fid = fontId(t.block) ?? (owner ? fontId(owner.index) : undefined) ?? 1;
+    const font = la.fonts[fid > 0 ? fid - 1 : 0] || la.fonts[0], s = latin1.decode(t.text);
+    return { ...t, i, nth: k, s, owner, uses, missing: font ? missingGlyphs(font, s) : [] };
+  });
+  const actName = a => `action ${a}${la.actionHash.has(a) ? ' #' + hex(la.actionHash.get(a)) : ''}`;
+  const where = r => r.block < nobj ? 'initial state' : r.uses.length ? 'set by ' + r.uses.map(u => `<a data-act="${u.action}">${actName(u.action)}</a>`).join(', ') : `block ${r.block} (no key uses it)`;
+  const label = r => r.owner ? `<a data-obj="${r.owner.index}">${r.owner.type_name} #${hex(r.owner.hash)} id${r.owner.id}</a>` : `block ${r.block}`;
+  P.innerHTML = `<div class="section"><div class="addrow"><input id="textFilter" placeholder="Filter text…" aria-label="Filter text" style="flex:1;width:auto"> <span class="dim small" id="textCount"></span></div>
+      <div class="dim small">Every string in the layout: String / Typing text and text that action keys set. Enter applies (any length),
+      Shift+Enter starts a new line, Esc restores; each change is one undo step. Click a name to open its properties.</div></div>` +
+    (rows.length ? rows.map(r => `<div class="trow" data-ti="${r.i}"><div class="tmeta">${label(r)} · ${where(r)}</div>
+      <textarea data-ti="${r.i}" rows="${Math.min(6, r.s.split('\n').length)}" spellcheck="false" aria-label="Text ${r.i + 1}"></textarea>
+      ${r.missing.length ? `<div class="warn small">not in the font, not drawn: ${r.missing.map(c => esc(showChar(c))).join(' ')}</div>` : ''}</div>`).join('')
+      : '<div class="pad dim">This layout has no text.</div>') +
+    (texts.length > rows.length ? `<div class="pad dim">… ${texts.length - rows.length} more strings</div>` : '');
+  const commit = async (ta, keepFocus) => {
+    const r = rows[+ta.dataset.ti], v = ta.value;
+    if (v === ta.defaultValue || ta.dataset.busy) return;
+    if (/[^\x00-\xff]/.test(v)) { msg('Text is stored as single bytes: only Latin-1 characters fit', true); return; }
+    ta.dataset.busy = '1';
+    if (keepFocus) S.textFocus = { i: r.i, caret: ta.selectionStart };
+    try {
+      if (v.length === r.text.length) await patchEdit(r.offset + 8, v.length + 's', v, 'text changed');
+      else await edit(m => m.setText(r.block, v, r.nth) || false, 'text changed');
+    } finally { delete ta.dataset.busy; }
+  };
+  P.querySelectorAll('textarea[data-ti]').forEach(ta => {
+    const r = rows[+ta.dataset.ti];
+    ta.defaultValue = r.s;               // set as text, not parsed: keeps leading line breaks
+    ta.onkeydown = e => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); commit(ta, true); }
+      else if (e.key === 'Escape') ta.value = ta.defaultValue;
+    };
+    ta.onchange = () => commit(ta, false);
+    // focus picks the object in the preview; it comes back after the edit re-renders this tab
+    ta.onfocus = () => {
+      if (S.textFocus?.i !== r.i) S.textFocus = { i: r.i, caret: null };
+      if (r.owner && S.sel !== r.owner.index) { S.sel = r.owner.index; render(); }
+    };
+    ta.onblur = e => { if (!e.relatedTarget?.matches?.('textarea[data-ti]')) S.textFocus = null; };
+  });
+  const filter = $('#textFilter');
+  const applyFilter = () => {
+    const w = filter.value.toLowerCase();
+    let n = 0;
+    P.querySelectorAll('.trow').forEach(d => {
+      const show = !w || rows[+d.dataset.ti].s.toLowerCase().includes(w) || d.querySelector('.tmeta').textContent.toLowerCase().includes(w);
+      d.hidden = !show; n += show;
+    });
+    $('#textCount').textContent = `${n} of ${texts.length}`;
+  };
+  filter.value = S.textFilter;
+  filter.oninput = () => { S.textFilter = filter.value; applyFilter(); };
+  applyFilter();
+  P.onclick = e => {
+    const o = e.target.closest('[data-obj]'), a = e.target.closest('[data-act]');
+    if (o) { S.sel = +o.dataset.obj; S.tab = 'props'; render(); showTab(); }
+    else if (a) { $('#action').value = a.dataset.act; $('#action').onchange(); }
+  };
+  const back = focus && P.querySelector(`textarea[data-ti="${focus.i}"]`);
+  if (back && !back.closest('.trow').hidden) {
+    back.focus();
+    const c = focus.caret ?? back.value.length;
+    back.setSelectionRange(c, c);
+  }
 }
 
 function tabTextures(P) {

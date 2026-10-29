@@ -484,10 +484,10 @@ export class Model {
     return true;
   }
 
-  /** Replace the string of a block's text packet (any length). */
-  setText(pos, text) {
+  /** Replace the string of a block's text packet (the nth one, any length). */
+  setText(pos, text, nth = 0) {
     const id = this.order[pos], b = this.block(id);
-    const i = b.packets.findIndex(q => q.type === 13);
+    const i = b.packets.findIndex(q => q.type === 13 && nth-- === 0);
     if (i < 0) return false;
     b.packets[i] = textPacket(this.le, text);
     this._putBlock(id, b);

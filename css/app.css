@@ -101,6 +101,12 @@ td.k { color: var(--dim); white-space: nowrap; }
 .addrow { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
 .addrow input { width: 56px; }
 textarea { width: 100%; height: 220px; font: 12px var(--mono); background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; }
+.trow { padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.trow textarea { display: block; height: auto; margin-top: 3px; padding: 3px 5px; resize: vertical; }
+.trow textarea:focus { outline: none; border-color: var(--accent); }
+.trow .warn { margin: 3px 0 0; }
+.tmeta { font: 12px var(--mono); color: var(--dim); }
+.tmeta a { color: var(--accent); cursor: pointer; }
 
 dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); padding: 0; width: min(520px, calc(100vw - 32px)); }
 dialog::backdrop { background: rgba(0, 0, 0, .45); }

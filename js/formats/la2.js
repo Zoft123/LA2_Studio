@@ -220,6 +220,40 @@ export class LA2 {
     }
     return out;
   }
+  /** Every text packet in block order: {block, offset (of the packet), text (bytes)}. Reads packet headers only, so
+   *  it stays fast on MGS4 layouts with millions of blocks. */
+  texts() {
+    const r = this.r, out = [];
+    for (let i = 0; i < this.nblocks; i++) {
+      const off = this.blockOff[i], end = off + this.blockSize(i);
+      for (let o = off + 4; o < end;) {
+        const type = r.u16(o), size = r.u16(o + 2);
+        if (type === 13) out.push({ block: i, offset: o, text: r.slice(o + 8, r.u32(o + 4)) });
+        if (type === 0 || size === 0) break;
+        o += size;
+      }
+    }
+    return out;
+  }
+  /** Set / morph keys that point into the given blocks: block -> [{action, object id}] (one raw pass over every key). */
+  keyTargets(blocks) {
+    const r = this.r, out = new Map();
+    this.actions.forEach((a, action) => a.tracks.forEach(tr => {
+      let q = tr.offset + 8;
+      for (let j = 0; j < tr.nkeys; j++) {
+        const type = r.u16(q), size = r.u16(q + 2);
+        const at = type === 7 || type === 8 ? this.blockAt(r.u32(q + (type === 7 ? 4 : 8))) : null;
+        if (at && blocks.has(at[0])) {
+          const list = out.get(at[0]) || [];
+          if (!list.some(t => t.action === action && t.object === tr.object)) list.push({ action, object: tr.object });
+          out.set(at[0], list);
+        }
+        if (type === 0 || size === 0) break;
+        q += size;
+      }
+    }));
+    return out;
+  }
   /** Decoded keys of one track. */
   keys(action, track, limit = Infinity) {
     const tr = this.actions[action].tracks[track], out = [];
