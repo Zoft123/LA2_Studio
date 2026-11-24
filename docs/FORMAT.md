@@ -7,7 +7,8 @@ Structure names follow the engine's own naming where it is known.
 ## Conventions
 
 - **Byte order:** big-endian on PS3. Metal Gear Arcade's LA2 files are also big-endian (its archives and textures
-  are little-endian). A reader detects the order from the version field.
+  are little-endian). Metal Gear Solid 3 / Metal Gear Online (PS2) files are little-endian. A reader detects the
+  order from the version field.
 - **Units:** positions and sizes are in 1/16 pixel; rotation uses 4096 per full turn; scale uses 256 = 1.0;
   colours are RGBA bytes: RGB 0..255, alpha 0x80 = opaque (doubled and clamped when drawn).
 - **Names** (objects, actions, layers, textures, commands) are 24-bit string hashes:
@@ -15,7 +16,8 @@ Structure names follow the engine's own naming where it is known.
 
 ## Header (`tagLA2_HEADER`)
 
-`u32 version` (`0x00010008` or `0x00010009`), then 12 `u32` section offsets:
+`u32 version` (`0x00010008` or `0x00010009`; `0x00010007` on PS2), then 12 `u32` section offsets (11 on PS2, which
+has no layer table):
 
 | # | Section | Contents |
 |---|---|---|
@@ -219,3 +221,23 @@ Any other command hash is passed to the game as a signal.
 MGO2's stage archives are encrypted with a key derived from their folder below `USRDIR/o`, written
 `stage/<name>` (for both `o/stage/<name>` and `o/dl/p/stage/<name>`): a 64-bit XOR chain over the data followed by a
 16-byte MD5-based checksum. LA2 Studio decrypts such files when reading and re-encrypts archives it writes.
+
+## PS2: Metal Gear Solid 3 / Metal Gear Online (version 0x10007)
+
+The PS2 libla writes the same structures little-endian, with these differences:
+
+- The header has 11 section offsets (no `ofLayer`); every object is on layer 0.
+- **UV table** and font UVs are 0…65535 across the texture's region (MGS4: texels). The region already samples
+  texel centres, so no quarter-texel inset applies.
+- **Texture table** pairs `(texture hash, TRI hash)`; texture hashes repeat across TRIs (often at different places),
+  so a texture is identified by both.
+- Textures live in **TRI** files (`<TRI hash>.tri`, loose in a stage folder):
+  header `{u32 0, u32 width, u32 height, u32 clutHeight, u32 count, u32 0, u32 imageOffset, u32 clutOffset}`;
+  `count` records of 0xA0 bytes (0xC0 when 32 zero bytes follow the hash):
+  `{f32 u, f32 v, f32 uScale, f32 vScale, u32 texture hash, …, u64 TEX0 at +80 (+112)}`, the GS registers that
+  select the texture. The image and CLUT blocks are GS local memory: written as PSMCT32 rectangles 64 px wide
+  (buffer width 1), each texture is read back as PSMT4 / PSMT8 through its TEX0 (TBP0, TBW, TW, TH; CLUT CT32 at
+  CBP + CSA, CSM1 entry swizzle for 8-bit; alpha 0x80 = opaque). A texture is the (u, v, uScale, vScale) region,
+  in fractions of the TW × TH GS texture, which several textures share. Decoding follows otac0n/Codec's
+  `TriFile.cs` (MIT).
+

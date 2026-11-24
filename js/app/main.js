@@ -178,7 +178,7 @@ async function openFile(f, keep = null) {
     if (g !== S.gen) return;
     const la = new LA2(bytes);
     $('#busy').textContent = 'loading textures…';
-    await S.lib.prepare(la.tex_tbl.map(([h]) => h), S.texEdits);
+    await S.lib.prepare(la.texKeys, S.texEdits);
     if (g !== S.gen) return;
     S.file = f; S.bytes = bytes; S.la = la;
     S.scene = new Scene(la, S.lib);
@@ -204,13 +204,13 @@ async function openFile(f, keep = null) {
     if (keep) { pd.value = keep.action; S.also = S.also.filter(i => i < la.actions.length); S.sel = keep.sel !== null && keep.sel < la.objects.length ? keep.sel : null; S.tab = keep.tab; }
     else { pd.value = '-1'; S.also = gameLayers(la); }
     drawAlso();
-    $('#info').textContent = `${f.id} · v${(la.version & 0xFFFF).toString(16)} · ${la.le ? 'PC (LE)' : 'PS3 (BE)'} · ${la.objects.length} objects · ${la.actions.length} actions · ${la.tex_tbl.length} textures${ed ? ' · edited' : ''}`;
+    $('#info').textContent = `${f.id} · v${(la.version & 0xFFFF).toString(16)} · ${la.ps2 ? 'PS2 (LE)' : la.le ? 'PC (LE)' : 'PS3 (BE)'} · ${la.objects.length} objects · ${la.actions.length} actions · ${la.tex_tbl.length} textures${ed ? ' · edited' : ''}`;
     $('#info').title = f.path + (f.entry ? ' :: ' + f.entry : '');
     $('#view').classList.add('on'); $('#stageEmpty').hidden = true;
     loadTimeline();
     if (keep) $('#frame').value = Math.min(+$('#frame').max, keep.frame);
     drawFiles(); render(); showTab(); updateUndo(); updateSaveButtons();
-    const missing = la.tex_tbl.filter(([h]) => !S.lib.lookup(h)).length;
+    const missing = la.texKeys.filter(h => !S.lib.lookup(h)).length;
     if (missing) msg(`${missing} of ${la.tex_tbl.length} textures not found in this folder (Textures tab → search everything)`, false);
   } catch (e) {
     msg('Could not open ' + f.id + ': ' + e.message, true);
@@ -419,6 +419,7 @@ $('#dragmove').onchange = () => document.body.classList.toggle('dragmode', $('#d
 function current() { return S.edits.get(S.file.id)?.bytes || S.bytes; }
 async function edit(fn, label = 'edited') {
   if (!S.file) return;
+  if (S.la && S.la.ps2) { msg('Editing PS2 (MGS3 / MGO1) layouts is not supported yet: view and playback only', true); return; }
   const before = current();
   const m = new Model(before);
   const r = fn(m);
@@ -972,12 +973,12 @@ function tabText(P) {
 
 function tabTextures(P) {
   const la = S.la, lib = S.lib;
-  const rows = la.tex_tbl.map(([h], i) => ({ i: i + 1, h, info: lib.lookup(h) }));
+  const rows = la.texKeys.map((h, i) => ({ i: i + 1, h, name: la.tex_tbl[i][0], info: lib.lookup(h) }));
   P.innerHTML = '<div class="texgrid">' + rows.map(r => `<div class="tex" data-h="${r.h}">` +
     (r.info ? `<canvas data-tc="${r.i}"></canvas>` : '<div class="dim small" style="padding:20px 4px">not found in this folder</div>') +
-    `<div class="cap">#${r.i} · ${hex(r.h)}${r.info ? ` · ${r.info.w}×${r.info.h}` : ''}</div>` +
+    `<div class="cap">#${r.i} · ${hex(r.name)}${la.ps2 ? ' · TRI ' + hex(la.tex_tbl[r.i - 1][1]) : ''}${r.info ? ` · ${r.info.w}×${r.info.h}` : ''}</div>` +
     (r.info ? `<div class="cap" title="${esc(r.info.loc)}">${esc(r.info.loc.split('|').map((s, k) => k ? s : basename(s)).join(' · '))}</div>
-      <div class="acts"><a data-dl="${r.i}">PNG</a><label>replace…<input type="file" accept="image/png,image/*" data-rep="${r.i}" hidden></label></div>` : '') + '</div>').join('') + '</div>' +
+      <div class="acts"><a data-dl="${r.i}">PNG</a>${la.ps2 ? '' : `<label>replace…<input type="file" accept="image/png,image/*" data-rep="${r.i}" hidden></label>`}</div>` : '') + '</div>').join('') + '</div>' +
     (rows.some(r => !r.info) ? '<div class="pad"><button id="searchAll">Search everything for missing textures</button> <span class="dim small">indexes every archive in the opened folder</span></div>' : '') +
     '<div class="pad dim small">Pink outlines are the UV rectangles objects use. “replace…” imports an image (resized to the texture; atlas regions are pasted into their atlas), re-encodes it as DXT with the same mip layout and keeps an edited copy of the DLZ; “Save textures” downloads it.</div>';
   // thumbnails with UV outlines
@@ -987,7 +988,7 @@ function tabTextures(P) {
     if (t && u) { if (!used.has(t.value)) used.set(t.value, new Set()); used.get(t.value).add(u.value); }
   });
   P.querySelectorAll('canvas[data-tc]').forEach(c => {
-    const i = +c.dataset.tc, h = la.tex_tbl[i - 1][0], info = lib.lookup(h), img = lib.image(h);
+    const i = +c.dataset.tc, h = la.texKeys[i - 1], info = lib.lookup(h), img = lib.image(h);
     if (!info || !img) return;
     c.width = info.w || img.w; c.height = info.h || img.h;
     const ctx = c.getContext('2d'), id = new ImageData(c.width, c.height);
@@ -998,6 +999,11 @@ function tabTextures(P) {
       const pts = la.uv_tbl[u];
       if (!pts) continue;
       const off = la.version === 0x10009 ? [0, 0] : [-info.ox, -info.oy];
+      if (la.ps2) {          // PS2: 0..65535 of the texture region
+        const q = pts.map(([x, y]) => [info.u0 - info.ox + x / 65535 * info.uw, info.v0 - info.oy + y / 65535 * info.vh]);
+        if (q.length === 2) ctx.strokeRect(q[0][0], q[0][1], q[1][0] - q[0][0], q[1][1] - q[0][1]);
+        continue;
+      }
       if (pts.length === 2) ctx.strokeRect(pts[0][0] + off[0], pts[0][1] + off[1], pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]);
       else if (pts.length >= 3) { ctx.beginPath(); pts.forEach(([x, y], k) => k ? ctx.lineTo(x + off[0], y + off[1]) : ctx.moveTo(x + off[0], y + off[1])); ctx.closePath(); ctx.stroke(); }
     }
@@ -1005,7 +1011,7 @@ function tabTextures(P) {
   P.onclick = e => {
     const d = e.target.closest('[data-dl]');
     if (!d) return;
-    const i = +d.dataset.dl, h = la.tex_tbl[i - 1][0], info = lib.lookup(h), img = lib.image(h);
+    const i = +d.dataset.dl, h = la.texKeys[i - 1], info = lib.lookup(h), img = lib.image(h);
     const w = info.w || img.w, hh = info.h || img.h, out = new Uint8Array(w * hh * 4);
     for (let y = 0; y < hh; y++) out.set(img.rgba.subarray(((y + info.oy) * img.w + info.ox) * 4, ((y + info.oy) * img.w + info.ox + w) * 4), y * w * 4);
     download(encodePNG(w, hh, out), `${i}_${hex(h)}.png`);
@@ -1036,6 +1042,7 @@ function tabTextures(P) {
 }
 
 function tabTables(P) {
+  if (S.la.ps2) { P.innerHTML = '<div class="pad dim small">The tables editor does not support PS2 (MGS3 / MGO1) layouts yet.</div>'; return; }
   const m = new Model(current());
   const rows = {
     color: (m.color_tbl || []).map(l => l.map(c => [...c])),
@@ -1119,7 +1126,7 @@ function tabFile(P) {
   const sorted = offs.filter(([, o]) => o).map(([, o]) => o).sort((a, b) => a - b).concat([d.length]);
   const size = o => o ? sorted[sorted.indexOf(o) + 1] - o : 0;
   const row = (a, b, c = '') => `<tr><td class="k">${a}</td><td>${b}</td><td class="dim">${c}</td></tr>`;
-  P.innerHTML = `<div class="section"><b>${esc(S.file.id)}</b><div class="dim small">version 0x${la.version.toString(16)} · ${la.le ? 'little-endian (PC)' : 'big-endian (PS3)'} · ${d.length} bytes${S.edits.has(S.file.id) ? ' · edited' : ''}</div></div>
+  P.innerHTML = `<div class="section"><b>${esc(S.file.id)}</b><div class="dim small">version 0x${la.version.toString(16)} · ${la.ps2 ? 'little-endian (PS2)' : la.le ? 'little-endian (PC)' : 'big-endian (PS3)'} · ${d.length} bytes${S.edits.has(S.file.id) ? ' · edited' : ''}</div></div>
     <div class="section"><h3>Sections (tagLA2_HEADER)</h3><table>${offs.map(([n, o]) => row(n, o ? '0x' + o.toString(16) : '—', o ? size(o) + ' bytes' : '')).join('')}</table></div>
     <div class="section"><h3>Object counts (tagLA2_OBJ_DEF_HEADER)</h3><div class="dim small">Rebuilt on every structural edit.</div><table>${OBJ_DEF_NAMES.map((n, i) => row(n, la.obj_counts[i])).join('')}</table></div>
     <div class="section"><h3>Layers</h3><table>${la.layers.map(([h, st, c], i) => row(i + ' #' + hex(h), c + ' objects', 'status ' + st + (st & 1 ? ' (display off)' : ''))).join('') || row('none', '')}</table></div>

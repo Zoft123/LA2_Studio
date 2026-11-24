@@ -3,7 +3,8 @@
 // Nothing is uploaded anywhere; files are read on demand.
 import { readDar, readQar, inflateDlz } from '../formats/archives.js';
 import { decrypt, checksumOk, keyForPath, discEncryption } from '../formats/mgo2crypt.js';
-import { TexturePool, decodeDxt, parseTxn } from '../formats/textures.js';
+import { TexturePool, decodeDxt, parseTxn, RGBA } from '../formats/textures.js';
+import { parseTri, triTexKey } from '../formats/tri.js';
 
 const dirname = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
 const basename = p => p.slice(p.lastIndexOf('/') + 1);
@@ -63,7 +64,10 @@ export class HttpFS {
 }
 
 // ---- library ------------------------------------------------------------------------------------------------
-const TEX_EXT = new Set(['.qar', '.txn', '.dlz']);
+const TEX_EXT = new Set(['.qar', '.txn', '.dlz', '.tri']);
+/** TRI hash of a PS2 texture group, from its file name ("194580.tri"). */
+const triHash = p => { const n = basename(p).slice(0, -4); return /^[0-9a-f]{1,6}$/i.test(n) ? parseInt(n, 16) : null; };
+const isTexSource = p => ['.qar', '.txn', '.tri'].includes(ext(p));
 const BUDGET_POOLS = 512 << 20, BUDGET_IMAGES = 384 << 20;
 
 export class Library {
@@ -99,7 +103,7 @@ export class Library {
   /** Folders that hold LA2 data (loose .la2 or .dar), for the folder tree. */
   interesting(d) {
     const e = this.dirs.get(d);
-    return e ? e.files.filter(p => ['.la2', '.dar', '.qar', '.dlz', '.txn'].includes(ext(p))).length : 0;
+    return e ? e.files.filter(p => ['.la2', '.dar', '.qar', '.dlz', '.txn', '.tri'].includes(ext(p))).length : 0;
   }
 
   // ---- decryption ------------------------------------------------------------------------------------------
@@ -208,7 +212,7 @@ export class Library {
   /** Texture sources for an LA2 folder: its own .qar/.txn, then ancestors up to the stage folder;
    *  plus the paired o/stage/<name> <-> o/dl/p/stage/<name> folder. */
   textureDirs(dir) {
-    const has = d => (this.dirs.get(d)?.files || []).some(p => ext(p) === '.qar' || ext(p) === '.txn');
+    const has = d => (this.dirs.get(d)?.files || []).some(isTexSource);
     // a folder and its extracted Qar/ subfolder (the TXNs of an extracted archive, beside its Dar/)
     const sources = d => [d, ...[...(this.dirs.get(d)?.subdirs || [])].filter(s => basename(s).toLowerCase() === 'qar')].filter(has);
     const found = sources(dir);
@@ -231,11 +235,22 @@ export class Library {
   /** Index the TXN tables of the given folders: hash -> [location "dir|base"]. */
   async indexTextures(dirs, progress) {
     const index = new Map();
-    const archives = dirs.flatMap(d => (this.dirs.get(d)?.files || []).filter(p => ext(p) === '.qar' || ext(p) === '.txn'));
+    const archives = dirs.flatMap(d => (this.dirs.get(d)?.files || []).filter(isTexSource));
     for (let i = 0; i < archives.length; i++) {
       const p = archives[i];
       if (progress) progress(i, archives.length, p);
       try {
+        if (ext(p) === '.tri') {        // PS2 (MGS3 / MGO1): every TRI of a folder shares one pool, "dir|@tri"
+          const th = triHash(p);
+          if (th === null) continue;
+          const loc = dirname(p) + '|@tri';
+          for (const r of parseTri(await this.fs.read(p))) {
+            const k = triTexKey(r.tex, th);
+            if (!index.has(k)) index.set(k, []);
+            if (!index.get(k).includes(loc)) index.get(k).push(loc);
+          }
+          continue;
+        }
         const data = await this.read(p);
         const extracted = ext(p) === '.txn' && basename(dirname(p)).toLowerCase() === 'qar';
         const loc = dirname(p) + '|' + (extracted ? '@txn' : basename(p).slice(0, -4));
@@ -254,7 +269,7 @@ export class Library {
     this.fallback = null;
   }
   async searchAll(progress) {
-    const dirs = [...this.dirs.keys()].filter(d => (this.dirs.get(d).files || []).some(p => ext(p) === '.qar' || ext(p) === '.txn'));
+    const dirs = [...this.dirs.keys()].filter(d => (this.dirs.get(d).files || []).some(isTexSource));
     this.fallback = await this.indexTextures(dirs, progress);
   }
   /** DLZ files holding a location's texture data: <base>*.dlz, or every DLZ beside a loose <hash>.txn; an
@@ -275,6 +290,14 @@ export class Library {
     const pool = new TexturePool();
     const files = this.dirs.get(dir)?.files || [];
     const qar = files.find(p => basename(p) === base + '.qar'), txn = files.find(p => basename(p) === base + '.txn');
+    if (base === '@tri') {
+      for (const p of files.filter(p => ext(p) === '.tri')) {
+        const th = triHash(p);
+        if (th !== null) try { pool.addTri(await this.fs.read(p), th); } catch (x) { /* not a TRI */ }
+      }
+      this.pools.set(loc, pool);
+      return pool;
+    }
     if (base === '@txn') {
       // the extracted TXNs share one pool, so their common DLZs are inflated once
       for (const p of files.filter(p => ext(p) === '.txn')) try { pool.addTxn(await this.read(p)); } catch (x) {}
@@ -327,7 +350,8 @@ export class Library {
   lookup(h) {
     const r = this.resolved?.get(h);
     if (!r) return null;
-    return { w: r.info.w, h: r.info.h, ox: r.info.ox, oy: r.info.oy, iw: r.info.img.w, ih: r.info.img.h, loc: r.loc };
+    return { w: r.info.w, h: r.info.h, ox: r.info.ox, oy: r.info.oy, iw: r.info.img.w, ih: r.info.img.h, loc: r.loc,
+      u0: r.info.u0 ?? r.info.ox, v0: r.info.v0 ?? r.info.oy, uw: r.info.uw ?? r.info.w, vh: r.info.vh ?? r.info.h };
   }
   /** Decoded RGBA of the image a texture lives in (shared by atlas regions). */
   image(h) {
@@ -337,7 +361,7 @@ export class Library {
     if (this.images.has(key)) return this.images.get(key);
     const raw = r.pool.raw(h);
     if (!raw) return null;
-    const img = { key, w: raw.w, h: raw.h, rgba: decodeDxt(raw.w, raw.h, raw.fourcc, raw.data) };
+    const img = { key, w: raw.w, h: raw.h, rgba: raw.fourcc === RGBA ? raw.data : decodeDxt(raw.w, raw.h, raw.fourcc, raw.data) };
     this.images.set(key, img);
     let total = 0;
     for (const v of this.images.values()) total += v.rgba.length;

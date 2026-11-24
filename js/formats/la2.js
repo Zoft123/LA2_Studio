@@ -10,7 +10,10 @@
 // actions  u32 count; action {u16 tracks, u16 flags (loop), u16 size, u16 ?}; track {u16 object id, u16 keys,
 //          u32 size}; key {u16 type, u16 size, data}
 // Files are big-endian on PS3; the PC game (Metal Gear Arcade) ships them little-endian.
+// Version 0x10007 (Metal Gear Solid 3 / Metal Gear Online on PS2, little-endian) has 11 section offsets (no layers);
+// its UV and font UVs are 0..65535 of the texture region, and textures are named by (texture hash, TRI hash).
 import { Reader, latin1 } from '../core/bin.js';
+import { triTexKey } from './tri.js';
 
 export const SECTIONS = ['obj_def', 'status', 'action', 'action_table', 'tri', 'keyname', 'tex_tbl', 'color_tbl',
   'uv_tbl', 'ctrl_vertex_tbl', 'font', 'layer'];
@@ -135,16 +138,19 @@ export class LA2 {
   /** @param {Uint8Array} data */
   constructor(data) {
     const be = new Reader(data, false).u32(0);
-    this.le = !(be === 0x10008 || be === 0x10009);
+    this.le = !(be === 0x10007 || be === 0x10008 || be === 0x10009);
     const r = this.r = new Reader(data, this.le);
     this.data = data;
     this.version = r.u32(0);
     if ((this.version & 0xFFFF0000) !== 0x10000) throw new Error('not an LA2 file');
     this.offsets = {};
-    SECTIONS.forEach((n, i) => { this.offsets[n] = r.u32(4 + 4 * i); });
+    this.ps2 = this.version === 0x10007;
+    SECTIONS.forEach((n, i) => { this.offsets[n] = this.ps2 && i >= 11 ? 0 : r.u32(4 + 4 * i); });
     this.objects = this._objects();
     this._indexStatus();
     this.tex_tbl = this._pairs('tex_tbl');
+    /** Texture lookup keys, one per texture-table entry (TRI-qualified on PS2, where texture hashes repeat). */
+    this.texKeys = this.tex_tbl.map(([h, tri]) => this.ps2 ? triTexKey(h, tri) : h);
     this.tri = this._u32list('tri');
     this.color_tbl = this.offsets.color_tbl ? parseLists(r, this.offsets.color_tbl, true) : [];
     this.uv_tbl = this.offsets.uv_tbl ? parseLists(r, this.offsets.uv_tbl, false) : [];

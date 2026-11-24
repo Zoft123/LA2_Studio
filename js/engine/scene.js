@@ -24,6 +24,8 @@ const mix = (a, b, t) => {
 // SetPacketSprt / RSprt / String move each UV a quarter texel (4 of libla's 1/16-texel units) toward the centre of
 // the UV rectangle, so filtering never reaches the neighbouring atlas texels (or, at an edge, the other side)
 const UV_INSET = 0.25;
+/** Lookup key of texture-table entry i (TRI-qualified on PS2); undefined when there is no such entry. */
+const texKey = (la, i) => la.texKeys ? la.texKeys[i] : la.tex_tbl[i]?.[0];
 function insetUV(uv) {
   const cx = uv.reduce((s, p) => s + p[0], 0) / uv.length, cy = uv.reduce((s, p) => s + p[1], 0) / uv.length;
   const step = (v, c) => v < c ? v + UV_INSET : v > c ? v - UV_INSET : v;
@@ -518,17 +520,22 @@ export class Scene {
   /** Texture and UVs (atlas px) of a textured object; `inset` for Sprt / RSprt (TriangleStrip UVs are used as is). */
   _uv(st, n, inset = false) {
     if (!st.texture) return null;
-    const row = this.la.tex_tbl[st.texture - 1];
-    if (!row) return null;
-    const info = this.tx && this.tx.lookup(row[0]);
+    const key = texKey(this.la, st.texture - 1);
+    if (key === undefined) return null;
+    const info = this.tx && this.tx.lookup(key);
     if (!info) return null;
-    if (st.uv === null || st.uv >= this.la.uv_tbl.length) return { tex: row[0], uv: null };
-    let u = this.la.uv_tbl[st.uv].map(([a, b]) => this.la.version === 0x10009 ? [a + info.ox, b + info.oy] : [a, b]);
+    const ps2 = this.la.ps2;
+    let pts = st.uv === null || st.uv >= this.la.uv_tbl.length ? null : this.la.uv_tbl[st.uv];
+    if (!pts && ps2) pts = [[0, 0], [65535, 65535]];      // PS2: no UV entry = the whole texture region
+    if (!pts) return { tex: key, uv: null };
+    // PS2 (v7): 0..65535 of the texture region, whose TRI rectangle is already texel-centred (no inset)
+    let u = pts.map(([a, b]) => ps2 ? [info.u0 + a / 65535 * info.uw, info.v0 + b / 65535 * info.vh]
+      : this.la.version === 0x10009 ? [a + info.ox, b + info.oy] : [a, b]);
     if (u.length === 2 && n === 4) {
       const [[u0, v0], [u1, v1]] = u;
       u = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
     }
-    return { tex: row[0], uv: inset ? insetUV(u) : u };
+    return { tex: key, uv: inset && !ps2 ? insetUV(u) : u };
   }
 
   /** CreateLetter: glyphs at font-cell size (1/16 px), x advancing by glyph width; lines end at \n, \r or the
@@ -575,8 +582,8 @@ export class Scene {
   _text(o, st, M, col, x, y) {
     const la = this.la;
     if (!st.text || !la.fonts.length || !st.texture) return [];
-    const row = la.tex_tbl[st.texture - 1];
-    const info = row && this.tx && this.tx.lookup(row[0]);
+    const key = texKey(la, st.texture - 1);
+    const info = key !== undefined && this.tx ? this.tx.lookup(key) : null;
     const [space, mode, fid] = st.layout;
     const font = la.fonts[fid > 0 ? fid - 1 : 0] || la.fonts[0];
     let letters = this.layout(font, st.text, st.wh[0] ? st.wh[0][0] : 0, space, mode);
@@ -601,12 +608,16 @@ export class Scene {
       const pts = [[lx, ly], [lx + gw, ly], [lx + gw, ly + gh], [lx, ly + gh]]
         .map(([px, py]) => [M[0] * px + M[1] * py + M[2], M[3] * px + M[4] * py + M[5]]);
       let uv = null;
-      if (info) {
+      if (info && la.ps2) {
+        const U0 = info.u0 + u0 / 65535 * info.uw, U1 = info.u0 + u1 / 65535 * info.uw;
+        const V0 = info.v0 + v0 / 65535 * info.vh, V1 = info.v0 + v1 / 65535 * info.vh;
+        uv = [[U0, V0], [U1, V0], [U1, V1], [U0, V1]];
+      } else if (info) {
         const tw = info.w || info.iw, th = info.h || info.ih;
         const U0 = info.ox + u0 / 65535 * tw, U1 = info.ox + u1 / 65535 * tw, V0 = info.oy + v0 / 65535 * th, V1 = info.oy + v1 / 65535 * th;
         uv = insetUV([[U0, V0], [U1, V0], [U1, V1], [U0, V1]]);
       }
-      out.push({ kind: 'fan', pts, uv, tex: info ? row[0] : null, cols: Array(4).fill(cols[k]), blend: st.blend, id: o.id });
+      out.push({ kind: 'fan', pts, uv, tex: info ? key : null, cols: Array(4).fill(cols[k]), blend: st.blend, id: o.id });
     });
     return out;
   }

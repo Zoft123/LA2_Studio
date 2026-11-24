@@ -1,7 +1,10 @@
 // MGS4-engine textures: TXN tables (image + texture entries) and DLD data (texture pixels, usually from a DLZ).
 import { Reader } from '../core/bin.js';
+import { parseTri, TriMemory, triTexKey } from './tri.js';
 
 export const FOURCC = { 9: 'DXT1', 10: 'DXT3', 11: 'DXT5' };
+/** Pseudo format of already-decoded RGBA images (PS2 TRI textures). */
+export const RGBA = 'RGBA';
 
 /** TXN byte order: '<'-style little-endian for PC (MGA), big-endian for PS3 (MGS4 / MGO2). */
 function txnLE(t) {
@@ -102,12 +105,37 @@ export class TexturePool {
     this.owners = null;
   }
   addDld(bytes) { for (const [k, v] of parseDld(bytes)) this.data.set(k, v); }
+  /** PS2 TRI (MGS3 / MGO1): its textures under triTexKey(texture, TRI); each is a region of a GS texture decoded
+   *  on first use and shared by the regions that point at the same GS texture (same TEX0). */
+  addTri(bytes, triHash) {
+    const mem = { bytes, memory: null, images: new Map() };
+    for (const r of parseTri(bytes)) {
+      const g = r.gs, imgOff = [g.tbp, g.tbw, g.psm, g.tw, g.th, g.cbp, g.csax, g.csay, g.csm].join(',');
+      const key = triTexKey(r.tex, triHash);
+      if (this.infos.has(key)) continue;
+      this.infos.set(key, {
+        index: this.infos.size, tex: r.tex, tri: triHash, ps2: mem, gs: g, imgOff,
+        w: Math.max(1, Math.round(r.w)), h: Math.max(1, Math.round(r.h)), ox: Math.max(0, Math.floor(r.u)), oy: Math.max(0, Math.floor(r.v)),
+        u0: r.u, v0: r.v, uw: r.w, vh: r.h, img: { w: g.tw, h: g.th, fourcc: RGBA }, imgIdx: null,
+      });
+    }
+    this.bytes = (this.bytes || 0) + bytes.length;
+  }
 
   /** {w, h, fourcc, data} of a texture's full image (top mip) or null; no decoding. */
   raw(h) {
     const info = this.infos.get(h);
     if (!info || !info.img) return null;
     const { w, h: ih, fourcc } = info.img;
+    if (fourcc === RGBA) {
+      const m = info.ps2;
+      if (!m.images.has(info.imgOff)) {
+        m.memory = m.memory || new TriMemory(m.bytes);
+        m.images.set(info.imgOff, m.memory.decode(info.gs));
+      }
+      const data = m.images.get(info.imgOff);
+      return data ? { w, h: ih, fourcc, data } : null;
+    }
     if (!FOURCC[fourcc]) return null;
     const need = Math.max(1, (w + 3) >> 2) * Math.max(1, (ih + 3) >> 2) * (fourcc === 9 ? 8 : 16);
     if (!this.owners) {   // atlases: several TXN entries share one image; its data is stored under one index

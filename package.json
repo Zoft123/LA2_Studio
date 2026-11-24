@@ -1,7 +1,7 @@
 {
   "name": "la2-studio",
   "version": "1.0.0",
-  "description": "Browser-based viewer, player and editor for MGS4-engine LA2 2D layout files (Metal Gear Solid 4, Metal Gear Online 2, Metal Gear Arcade).",
+  "description": "Browser-based viewer, player and editor for MGS4-engine LA2 2D layout files (Metal Gear Solid 4, Metal Gear Online 2, Metal Gear Arcade), and MGS3 / Metal Gear Online on PS2 (view and playback).",
   "private": true,
   "type": "module",
   "license": "MIT",
