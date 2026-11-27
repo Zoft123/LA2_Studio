@@ -7,14 +7,21 @@ export const FOURCC = { 9: 'DXT1', 10: 'DXT3', 11: 'DXT5' };
 /** Pseudo format of already-decoded RGBA images (PS2 TRI textures). */
 export const RGBA = 'RGBA';
 
+/** TRI hashes are 24-bit; PS2 texture keys are tri << 24 | texture hash (see triTexKey). */
+const HASH_RANGE = 0x1000000;
+
 /** A PS3-port TRI whose image block is all zeros (its textures are CTXRs): its own pixels count as missing. */
-function triStub(bytes) {
-  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const a = v.getUint32(24, true), b = Math.min(bytes.length, v.getUint32(28, true));
-  if (!(a < b)) return false;
-  for (let i = a; i < b; i++) if (bytes[i]) return false;
+function isStubTri(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const imageStart = view.getUint32(24, true);                            // TRI header: imageOffset
+  const imageEnd = Math.min(bytes.length, view.getUint32(28, true));      // the CLUT block follows the image block
+  if (!(imageStart < imageEnd)) return false;
+  for (let i = imageStart; i < imageEnd; i++) if (bytes[i]) return false;
   return true;
 }
+
+/** Identifies the GS texture (and palette) a TRI record reads: records with equal keys share one decoded image. */
+const gsImageKey = gs => [gs.tbp, gs.tbw, gs.psm, gs.tw, gs.th, gs.cbp, gs.csax, gs.csay, gs.csm].join(',');
 
 /** TXN byte order: '<'-style little-endian for PC (MGA), big-endian for PS3 (MGS4 / MGO2). */
 function txnLE(t) {
@@ -117,18 +124,27 @@ export class TexturePool {
   addDld(bytes) { for (const [k, v] of parseDld(bytes)) this.data.set(k, v); }
   /** PS2 TRI (MGS3 / MGO1): its textures under triTexKey(texture, TRI); each is a region of a GS texture decoded
    *  on first use and shared by the regions that point at the same GS texture (same TEX0).
-   *  `hd` (texture hash -> CTXR source) marks the PS3 port's HD replacements; load them with setHd(). */
+   *  `hd` (texture hash -> CTXR source) marks the PS3 port's HD replacements; load them with setHd().
+   *
+   *  PS2 infos have the TXN info fields (index, tex, tri, w, h, ox, oy, imgOff, img, imgIdx) plus:
+   *  ps2  the TRI they come from ({bytes, memory: TriMemory once decoded, images: decoded GS textures, stub})
+   *  gs   TEX0 fields; imgOff is gsImageKey(gs) (or 'ctxr:<hash>' once a CTXR replaces the image)
+   *  u0, v0, uw, vh  the texture's rectangle in its image (fractional texels; layout UVs are 0..65535 of it)
+   *  rec  the TRI record; hdSrc  the CTXR source to load (null: none), hd  its bytes once loaded. */
   addTri(bytes, triHash, hd = null) {
-    const mem = { bytes, memory: null, images: new Map(), stub: triStub(bytes) };
-    for (const r of parseTri(bytes)) {
-      const g = r.gs, imgOff = [g.tbp, g.tbw, g.psm, g.tw, g.th, g.cbp, g.csax, g.csay, g.csm].join(',');
-      const key = triTexKey(r.tex, triHash);
+    const tri = { bytes, memory: null, images: new Map(), stub: isStubTri(bytes) };
+    for (const rec of parseTri(bytes)) {
+      const gs = rec.gs;
+      const key = triTexKey(rec.tex, triHash);
       if (this.infos.has(key)) continue;
       this.infos.set(key, {
-        index: this.infos.size, tex: r.tex, tri: triHash, ps2: mem, gs: g, imgOff,
-        w: Math.max(1, Math.round(r.w)), h: Math.max(1, Math.round(r.h)), ox: Math.max(0, Math.floor(r.u)), oy: Math.max(0, Math.floor(r.v)),
-        u0: r.u, v0: r.v, uw: r.w, vh: r.h, img: { w: g.tw, h: g.th, fourcc: RGBA }, imgIdx: null,
-        rec: r, hdSrc: hd?.get(r.tex) ?? null, hd: null,
+        index: this.infos.size, tex: rec.tex, tri: triHash, ps2: tri, gs, imgOff: gsImageKey(gs),
+        // whole texels covered by the region (for the texture list and PNG export)
+        w: Math.max(1, Math.round(rec.w)), h: Math.max(1, Math.round(rec.h)),
+        ox: Math.max(0, Math.floor(rec.u)), oy: Math.max(0, Math.floor(rec.v)),
+        u0: rec.u, v0: rec.v, uw: rec.w, vh: rec.h,
+        img: { w: gs.tw, h: gs.th, fourcc: RGBA }, imgIdx: null,
+        rec, hdSrc: hd?.get(rec.tex) ?? null, hd: null,
       });
     }
     this.bytes = (this.bytes || 0) + bytes.length;
@@ -138,21 +154,28 @@ export class TexturePool {
    *  finds CTXRs by texture hash): it gets an info of its own, with the whole CTXR as its region. */
   info(key) {
     let info = this.infos.get(key);
-    const tex = key % 0x1000000, src = info || key < 0x1000000 ? null : this.hd?.get(tex);
-    if (src) {
-      info = { index: this.infos.size, tex, tri: Math.floor(key / 0x1000000), ps2: null, gs: null, imgOff: 'ctxr:' + tex,
+    if (info || key < HASH_RANGE) return info;                 // known, or not a PS2 (TRI-qualified) key
+    const tex = key % HASH_RANGE, source = this.hd?.get(tex);
+    if (source) {
+      info = {
+        index: this.infos.size, tex, tri: Math.floor(key / HASH_RANGE), ps2: null, gs: null, imgOff: 'ctxr:' + tex,
         w: 1, h: 1, ox: 0, oy: 0, u0: 0, v0: 0, uw: 1, vh: 1, img: { w: 1, h: 1, fourcc: RGBA }, imgIdx: null,
-        rec: { u: 0, v: 0, w: 0, h: 0 }, hdSrc: src, hd: null };
+        rec: { u: 0, v: 0, w: 0, h: 0 },                         // empty region: ctxrRegion uses the whole image
+        hdSrc: source, hd: null,
+      };
       this.infos.set(key, info);
     }
     return info;
   }
 
-  /** Use a PS3-port CTXR as a TRI texture's image: the whole CTXR is the texture's region, at its own size. */
+  /** Use a PS3-port CTXR as a TRI texture's image: the CTXR redraws the texture's region at its own size. */
   setHd(info, bytes) {
-    const t = parseCtxr(bytes);
-    if (!t) { info.hdSrc = null; return false; }
-    Object.assign(info, ctxrRegion(info.rec, t.w, t.h), { hd: bytes, w: t.w, h: t.h, ox: 0, oy: 0, imgOff: 'ctxr:' + info.tex, img: { w: t.w, h: t.h, fourcc: RGBA } });
+    const header = parseCtxr(bytes);
+    if (!header) { info.hdSrc = null; return false; }
+    Object.assign(info, ctxrRegion(info.rec, header.w, header.h), {
+      hd: bytes, w: header.w, h: header.h, ox: 0, oy: 0, imgOff: 'ctxr:' + info.tex,
+      img: { w: header.w, h: header.h, fourcc: RGBA },
+    });
     this.bytes = (this.bytes || 0) + bytes.length;
     return true;
   }
@@ -162,19 +185,19 @@ export class TexturePool {
     const info = this.infos.get(h);
     if (!info || !info.img) return null;
     const { w, h: ih, fourcc } = info.img;
-    if (info.hd) {
+    if (info.hd) {                                             // PS3 port: decoded CTXR, cached on the info
       if (info.hdRgba === undefined) info.hdRgba = decodeCtxr(info.hd)?.rgba || null;
       return info.hdRgba ? { w, h: ih, fourcc, data: info.hdRgba } : null;
     }
     if (info.hdSrc !== undefined && !info.ps2) return null;   // CTXR-only texture, not loaded (or unreadable)
-    if (fourcc === RGBA) {
-      const m = info.ps2;
-      if (m.stub) return null;
-      if (!m.images.has(info.imgOff)) {
-        m.memory = m.memory || new TriMemory(m.bytes);
-        m.images.set(info.imgOff, m.memory.decode(info.gs));
+    if (fourcc === RGBA) {                                     // PS2: decode the GS texture once per TRI
+      const tri = info.ps2;
+      if (tri.stub) return null;
+      if (!tri.images.has(info.imgOff)) {
+        tri.memory = tri.memory || new TriMemory(tri.bytes);
+        tri.images.set(info.imgOff, tri.memory.decode(info.gs));
       }
-      const data = m.images.get(info.imgOff);
+      const data = tri.images.get(info.imgOff);
       return data ? { w, h: ih, fourcc, data } : null;
     }
     if (!FOURCC[fourcc]) return null;

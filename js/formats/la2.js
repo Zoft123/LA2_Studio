@@ -147,9 +147,16 @@ export class LA2 {
     if ((this.version & 0xFFFF0000) !== 0x10000) throw new Error('not an LA2 file');
     this.offsets = {};
     this.ps2 = this.version === 0x10007;
-    /** PS3 HD port: layout in 1280x720 coordinates (flag 0x10000000 on ofObj). */
-    this.hd = this.ps2 && (r.u32(4) & 0xF0000000) === 0x10000000;
-    SECTIONS.forEach((n, i) => { this.offsets[n] = this.ps2 && i >= 11 ? 0 : i === 0 && this.ps2 ? r.u32(4) & 0x0FFFFFFF : r.u32(4 + 4 * i); });
+    // v7 (PS2) has 11 section offsets (no layer section); the top bits of the first one (ofObj) are flags, and
+    // flag 0x10000000 marks a PS3 HD port layout in 1280x720 coordinates.
+    const PS2_SECTIONS = 11, OFFSET_MASK = 0x0FFFFFFF, FLAG_MASK = 0xF0000000, HD_FLAG = 0x10000000;
+    /** PS3 HD port: layout in 1280x720 coordinates. */
+    this.hd = this.ps2 && (r.u32(4) & FLAG_MASK) === HD_FLAG;
+    SECTIONS.forEach((name, i) => {
+      if (this.ps2 && i >= PS2_SECTIONS) this.offsets[name] = 0;
+      else if (this.ps2 && i === 0) this.offsets[name] = r.u32(4) & OFFSET_MASK;
+      else this.offsets[name] = r.u32(4 + 4 * i);
+    });
     this.objects = this._objects();
     this._indexStatus();
     this.tex_tbl = this._pairs('tex_tbl');

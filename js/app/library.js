@@ -66,8 +66,15 @@ export class HttpFS {
 
 // ---- library ------------------------------------------------------------------------------------------------
 const TEX_EXT = new Set(['.qar', '.txn', '.dlz', '.tri']);
+/** Texture and TRI hashes are 24-bit; larger texture keys are TRI-qualified (PS2: tri << 24 | texture). */
+const MAX_HASH = 0xFFFFFF;
 /** TRI hash of a PS2 texture group, from its file name ("194580.tri"; "00194580.tri" in the PS3 HD port). */
-const triHash = p => { const n = basename(p).slice(0, -4); return /^[0-9a-f]{1,8}$/i.test(n) && parseInt(n, 16) <= 0xFFFFFF ? parseInt(n, 16) : null; };
+function triHash(p) {
+  const name = basename(p).slice(0, -'.tri'.length);
+  if (!/^[0-9a-f]{1,8}$/i.test(name)) return null;
+  const hash = parseInt(name, 16);
+  return hash <= MAX_HASH ? hash : null;
+}
 const isTexSource = p => ['.qar', '.txn', '.tri'].includes(ext(p));
 const BUDGET_POOLS = 512 << 20, BUDGET_IMAGES = 384 << 20;
 
@@ -340,7 +347,7 @@ export class Library {
   locations(h) {
     const own = this.index?.get(h) || [];
     // MGS3 PS3 port: a TRI-qualified key with no TRI record nearby may still have its CTXR beside the layout
-    const hd = h > 0xFFFFFF && this.texDir && !own.length ? [this.texDir + '|@tri'] : [];
+    const hd = h > MAX_HASH && this.texDir && !own.length ? [this.texDir + '|@tri'] : [];
     return [...own, ...((this.fallback?.get(h) || []).filter(l => !own.includes(l))), ...hd];
   }
   /** Load everything needed for these texture hashes (async); afterwards lookup() / image() answer synchronously. */
