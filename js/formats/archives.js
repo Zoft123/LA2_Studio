@@ -58,6 +58,33 @@ export function readQar(bytes) {
   return out;
 }
 
+// ---- Peace Walker QAR (little-endian): files at 0x1000 boundaries, then (at the offset in the last u32)
+// {u32 count, count x (u32 id = StrCode24(name) | type << 24, u32 size)}, then the names (NUL-terminated, in order).
+// (Extractors that pack the files back to back instead of 0x1000-aligned cut every file but the first wrongly.)
+const PW_QAR_ALIGN = 0x1000;
+/** Entries of a Peace Walker QAR ({name, id, data}), or null when the bytes are not one. */
+export function readPwQar(bytes) {
+  if (bytes.length < 16) return null;
+  const r = new Reader(bytes, true);
+  const toc = r.u32(bytes.length - 4);
+  if (toc % PW_QAR_ALIGN || toc + 4 > bytes.length - 4) return null;
+  const count = r.u32(toc);
+  if (!count || toc + 4 + 8 * count > bytes.length - 4) return null;
+  let p = toc + 4 + 8 * count, o = 0;
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    let z = p;
+    while (z < bytes.length && bytes[z] !== 0) z++;
+    if (z >= bytes.length) return null;
+    const id = r.u32(toc + 4 + 8 * i), size = r.u32(toc + 8 + 8 * i);
+    if (o + size > toc) return null;
+    out.push({ name: latin1.decode(bytes.subarray(p, z)), id, data: bytes.subarray(o, o + size) });
+    p = z + 1;
+    o = align(o + size, PW_QAR_ALIGN);
+  }
+  return out;
+}
+
 // ---- DLZ: 'segs' segments of raw-deflate chunks -> DLD bytes ------------------------------------------------------
 // segment {'segs', u16 4, u16 count, u32 total uncompressed, u32 serialized size (always LE)} + count x
 // {u16 csize, u16 usize, u32 offset+1}; chunks of 0x4000 input bytes, 16-aligned; segments padded to 0x20000.

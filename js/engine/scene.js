@@ -40,6 +40,13 @@ export function isRuntimeTextField(font, raw) {
   return s.length > 0 && /^@+$/.test(s);
 }
 
+/** LA3 (Peace Walker) runtime text field: '@' characters (plus line breaks / spaces) only; its fonts draw '@' as
+ *  an ordinary letter, so the text alone decides. */
+export function isLa3RuntimeText(raw) {
+  const s = latin1.decode(raw).replace(/[\n\r \0]/g, '');
+  return s.length > 0 && /^@+$/.test(s);
+}
+
 function insetUV(uv) {
   const cx = uv.reduce((s, p) => s + p[0], 0) / uv.length, cy = uv.reduce((s, p) => s + p[1], 0) / uv.length;
   const step = (v, c) => v < c ? v + UV_INSET : v > c ? v - UV_INSET : v;
@@ -542,14 +549,18 @@ export class Scene {
     let pts = st.uv === null || st.uv >= this.la.uv_tbl.length ? null : this.la.uv_tbl[st.uv];
     if (!pts && ps2) pts = [[0, 0], [65535, 65535]];      // PS2: no UV entry = the whole texture region
     if (!pts) return { tex: key, uv: null };
-    // PS2 (v7): 0..65535 of the texture region, whose TRI rectangle is already texel-centred (no inset)
+    // PS2 (v7): 0..65535 of the texture region, whose TRI rectangle is already texel-centred (no inset).
+    // LA3 (Peace Walker): signed, in 1/16 texel of the texture's own size (lw x lh), which an HD image may redraw
+    // larger; the layouts keep their own distance from the edges (no inset)
+    const la3 = !!this.la.la3, s16 = v => v > 0x7FFF ? v - 0x10000 : v;
     let u = pts.map(([a, b]) => ps2 ? [info.u0 + a / 65535 * info.uw, info.v0 + b / 65535 * info.vh]
+      : la3 ? [info.u0 + s16(a) / this.la.uvUnit / info.lw * info.uw, info.v0 + s16(b) / this.la.uvUnit / info.lh * info.vh]
       : this.la.version === 0x10009 ? [a + info.ox, b + info.oy] : [a, b]);
     if (u.length === 2 && n === 4) {
       const [[u0, v0], [u1, v1]] = u;
       u = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
     }
-    return { tex: key, uv: inset && !ps2 ? insetUV(u) : u };
+    return { tex: key, uv: inset && !ps2 && !la3 ? insetUV(u) : u };
   }
 
   /** CreateLetter: glyphs at font-cell size (1/16 px), x advancing by glyph width; lines end at \n, \r or the
@@ -600,7 +611,7 @@ export class Scene {
     const info = key !== undefined && this.tx ? this.tx.lookup(key) : null;
     const [space, mode, fid] = st.layout;
     const font = la.fonts[fid > 0 ? fid - 1 : 0] || la.fonts[0];
-    if (!this.showPlaceholders && isRuntimeTextField(font, st.text)) return [];
+    if (!this.showPlaceholders && (la.la3 ? isLa3RuntimeText(st.text) : isRuntimeTextField(font, st.text))) return [];
     let letters = this.layout(font, st.text, st.wh[0] ? st.wh[0][0] : 0, space, mode);
     let cols = letters.map(() => col);
     if (o.type === 11) {
@@ -623,7 +634,10 @@ export class Scene {
       const pts = [[lx, ly], [lx + gw, ly], [lx + gw, ly + gh], [lx, ly + gh]]
         .map(([px, py]) => [M[0] * px + M[1] * py + M[2], M[3] * px + M[4] * py + M[5]]);
       let uv = null;
-      if (info && la.ps2) {
+      if (info && la.la3) {                       // LA3: 1/16 texel of the texture's layout size (see _uv)
+        const U = a => info.u0 + a / la.uvUnit / info.lw * info.uw, V = b => info.v0 + b / la.uvUnit / info.lh * info.vh;
+        uv = [[U(u0), V(v0)], [U(u1), V(v0)], [U(u1), V(v1)], [U(u0), V(v1)]];
+      } else if (info && la.ps2) {
         const U0 = info.u0 + u0 / 65535 * info.uw, U1 = info.u0 + u1 / 65535 * info.uw;
         const V0 = info.v0 + v0 / 65535 * info.vh, V1 = info.v0 + v1 / 65535 * info.vh;
         uv = [[U0, V0], [U1, V0], [U1, V1], [U0, V1]];

@@ -1,11 +1,12 @@
 // The user's game files, read in the browser: a picked folder (File System Access API or a folder <input>),
 // listing of LA2 files (loose and inside .dar archives), MGO2 decryption, and texture lookup.
 // Nothing is uploaded anywhere; files are read on demand.
-import { readDar, readQar, inflateDlz } from '../formats/archives.js';
+import { readDar, readQar, readPwQar, inflateDlz } from '../formats/archives.js';
 import { decrypt, checksumOk, keyForPath, discEncryption } from '../formats/mgo2crypt.js';
 import { TexturePool, decodeDxt, parseTxn, RGBA } from '../formats/textures.js';
 import { parseTri, triTexKey } from '../formats/tri.js';
 import { ctxrDirs, ctxrHash } from '../formats/ctxr.js';
+import { parseTxp, txpTexKey } from '../formats/txp.js';
 
 const dirname = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
 const basename = p => p.slice(p.lastIndexOf('/') + 1);
@@ -65,7 +66,6 @@ export class HttpFS {
 }
 
 // ---- library ------------------------------------------------------------------------------------------------
-const TEX_EXT = new Set(['.qar', '.txn', '.dlz', '.tri']);
 /** Texture and TRI hashes are 24-bit; larger texture keys are TRI-qualified (PS2: tri << 24 | texture). */
 const MAX_HASH = 0xFFFFFF;
 /** TRI hash of a PS2 texture group, from its file name ("194580.tri"; "00194580.tri" in the PS3 HD port). */
@@ -75,7 +75,8 @@ function triHash(p) {
   const hash = parseInt(name, 16);
   return hash <= MAX_HASH ? hash : null;
 }
-const isTexSource = p => ['.qar', '.txn', '.tri'].includes(ext(p));
+const isTexSource = p => ['.qar', '.txn', '.tri', '.txp'].includes(ext(p));
+const isLayout = p => ['.la2', '.la3'].includes(ext(p));
 const BUDGET_POOLS = 512 << 20, BUDGET_IMAGES = 384 << 20;
 
 export class Library {
@@ -108,10 +109,10 @@ export class Library {
     return this.files.length;
   }
 
-  /** Folders that hold LA2 data (loose .la2 or .dar), for the folder tree. */
+  /** Folders that hold layout data (loose .la2 / .la3 or .dar), for the folder tree. */
   interesting(d) {
     const e = this.dirs.get(d);
-    return e ? e.files.filter(p => ['.la2', '.dar', '.qar', '.dlz', '.txn', '.tri'].includes(ext(p))).length : 0;
+    return e ? e.files.filter(p => ['.la2', '.la3', '.dar', '.qar', '.dlz', '.txn', '.tri', '.txp'].includes(ext(p))).length : 0;
   }
 
   // ---- decryption ------------------------------------------------------------------------------------------
@@ -152,18 +153,18 @@ export class Library {
   keyFor(dir) { const d = discEncryption(dir + '/x'); if (d && !d.encrypted) return null; return this.settings.key || keyForPath(dir + '/x') || this.keys.get(dir) || null; }
 
   // ---- LA2 files ---------------------------------------------------------------------------------------------
-  /** LA2 files of a folder: loose ones and those inside its .dar archives ({id, path, entry}). */
+  /** Layout files (LA2, Peace Walker LA3) of a folder: loose ones and those inside its .dar archives ({id, path, entry}). */
   async la2Files(dir, recursive = false, progress) {
     const inDir = p => recursive ? p.startsWith(dir + '/') || dirname(p) === dir : dirname(p) === dir;
     const paths = this.files.filter(inDir);
     const out = [];
-    for (const p of paths) if (ext(p) === '.la2') out.push({ id: p.slice(dir.length + 1), path: p, entry: null });
+    for (const p of paths) if (isLayout(p)) out.push({ id: p.slice(dir.length + 1), path: p, entry: null });
     const dars = paths.filter(p => ext(p) === '.dar');
     for (let i = 0; i < dars.length; i++) {
       if (progress) progress(i, dars.length, dars[i]);
       try {
         const d = readDar(await this.read(dars[i]));
-        for (const e of d.entries) if (e.name.toLowerCase().endsWith('.la2'))
+        for (const e of d.entries) if (isLayout(e.name))
           out.push({ id: dars[i].slice(dir.length + 1) + '::' + e.name, path: dars[i], entry: e.name });
       } catch (e) { /* not a DAR this tool understands */ }
     }
@@ -259,7 +260,20 @@ export class Library {
           }
           continue;
         }
+        if (ext(p) === '.txp') {        // Peace Walker: every loose TXP of a folder shares one pool, "dir|@txp"
+          const txp = parseTxp(await this.fs.read(p));
+          if (txp) for (const t of txp.textures) this._index(index, txpTexKey(t.hash, txp.hash), dirname(p) + '|@txp');
+          continue;
+        }
         const data = await this.read(p);
+        const pw = ext(p) === '.qar' ? readPwQar(data) : null;
+        if (pw) {                       // Peace Walker QAR: its TXPs, "dir|<qar name>"
+          for (const e of pw) {
+            const txp = ext(e.name) === '.txp' ? parseTxp(e.data) : null;
+            if (txp) for (const t of txp.textures) this._index(index, txpTexKey(t.hash, txp.hash), dirname(p) + '|' + basename(p).slice(0, -4));
+          }
+          continue;
+        }
         const extracted = ext(p) === '.txn' && basename(dirname(p)).toLowerCase() === 'qar';
         const loc = dirname(p) + '|' + (extracted ? '@txn' : basename(p).slice(0, -4));
         const tables = ext(p) === '.txn' ? [data] : readQar(data).filter(e => e.name.endsWith('.txn')).map(e => e.data);
@@ -270,6 +284,10 @@ export class Library {
       } catch (e) { /* unreadable archive */ }
     }
     return index;
+  }
+  _index(index, key, loc) {
+    if (!index.has(key)) index.set(key, []);
+    if (!index.get(key).includes(loc)) index.get(key).push(loc);
   }
   async openTextures(dir, progress) {
     this.texDir = dir;
@@ -315,6 +333,13 @@ export class Library {
       this.pools.set(loc, pool);
       return pool;
     }
+    if (base === '@txp' || (qar && readPwQar(await this.read(qar)))) {
+      // Peace Walker: loose TXPs, or the TXPs inside a PW QAR
+      if (base === '@txp') for (const p of files.filter(p => ext(p) === '.txp')) try { pool.addTxp(await this.fs.read(p)); } catch (x) { /* not a TXP */ }
+      else for (const e of readPwQar(await this.read(qar))) if (ext(e.name) === '.txp') try { pool.addTxp(e.data); } catch (x) { /* not a TXP */ }
+      this.pools.set(loc, pool);
+      return pool;
+    }
     if (base === '@txn') {
       // the extracted TXNs share one pool, so their common DLZs are inflated once
       for (const p of files.filter(p => ext(p) === '.txn')) try { pool.addTxn(await this.read(p)); } catch (x) {}
@@ -347,7 +372,9 @@ export class Library {
   locations(h) {
     const own = this.index?.get(h) || [];
     // MGS3 PS3 port: a TRI-qualified key with no TRI record nearby may still have its CTXR beside the layout
-    const hd = h > MAX_HASH && this.texDir && !own.length ? [this.texDir + '|@tri'] : [];
+    // (TXP-qualified Peace Walker keys are large too: not in a folder of LA3 layouts)
+    const la3Dir = this.texDir && (this.dirs.get(this.texDir)?.files || []).some(p => ext(p) === '.la3');
+    const hd = h > MAX_HASH && this.texDir && !la3Dir && !own.length ? [this.texDir + '|@tri'] : [];
     return [...own, ...((this.fallback?.get(h) || []).filter(l => !own.includes(l))), ...hd];
   }
   /** Load everything needed for these texture hashes (async); afterwards lookup() / image() answer synchronously. */
@@ -372,7 +399,8 @@ export class Library {
     const r = this.resolved?.get(h);
     if (!r) return null;
     return { w: r.info.w, h: r.info.h, ox: r.info.ox, oy: r.info.oy, iw: r.info.img.w, ih: r.info.img.h, loc: r.loc,
-      u0: r.info.u0 ?? r.info.ox, v0: r.info.v0 ?? r.info.oy, uw: r.info.uw ?? r.info.w, vh: r.info.vh ?? r.info.h };
+      u0: r.info.u0 ?? r.info.ox, v0: r.info.v0 ?? r.info.oy, uw: r.info.uw ?? r.info.w, vh: r.info.vh ?? r.info.h,
+      lw: r.info.lw, lh: r.info.lh };
   }
   /** Decoded RGBA of the image a texture lives in (shared by atlas regions). */
   image(h) {

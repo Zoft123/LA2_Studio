@@ -2,6 +2,7 @@
 import { Reader } from '../core/bin.js';
 import { parseTri, TriMemory, triTexKey } from './tri.js';
 import { parseCtxr, decodeCtxr, ctxrRegion } from './ctxr.js';
+import { parseTxp, txpImageSize, decodeTxpImage, txpTexKey } from './txp.js';
 
 export const FOURCC = { 9: 'DXT1', 10: 'DXT3', 11: 'DXT5' };
 /** Pseudo format of already-decoded RGBA images (PS2 TRI textures). */
@@ -168,6 +169,31 @@ export class TexturePool {
     return info;
   }
 
+  /** Peace Walker TXP: its textures under txpTexKey(texture, TXP). A texture is a rectangle of an image (an
+   *  indexed PSP image or a DDS): u0, v0, uw, vh in image texels; lw, lh its size in the layouts' UV units
+   *  (1/16 of these texels), which an HD image may draw at a larger size. Images decode on first use. */
+  addTxp(bytes) {
+    const txp = parseTxp(bytes);
+    if (!txp) return false;
+    for (const t of txp.textures) {
+      const key = txpTexKey(t.hash, txp.hash);
+      if (this.infos.has(key)) continue;
+      const size = txpImageSize(bytes, t);
+      const W = size ? size.w : 1, H = size ? size.h : 1;
+      const u0 = t.u * W, v0 = t.v * H, uw = t.uw * W, vh = t.vh * H;
+      this.infos.set(key, {
+        index: this.infos.size, tex: t.hash, tri: txp.hash, txp: { bytes, tex: t, available: !!size },
+        // the same pixels with another palette decode differently
+        imgOff: `txp:${t.image ? t.image.offset : -1}:${t.palette}`,
+        w: Math.max(1, Math.round(uw)), h: Math.max(1, Math.round(vh)), ox: Math.floor(u0), oy: Math.floor(v0),
+        u0, v0, uw, vh, lw: t.w || 1, lh: t.h || 1,
+        img: { w: W, h: H, fourcc: RGBA }, imgIdx: null,
+      });
+    }
+    this.bytes = (this.bytes || 0) + bytes.length;
+    return true;
+  }
+
   /** Use a PS3-port CTXR as a TRI texture's image: the CTXR redraws the texture's region at its own size. */
   setHd(info, bytes) {
     const header = parseCtxr(bytes);
@@ -185,6 +211,11 @@ export class TexturePool {
     const info = this.infos.get(h);
     if (!info || !info.img) return null;
     const { w, h: ih, fourcc } = info.img;
+    if (info.txp) {                                            // Peace Walker TXP: decoded once, cached on the info
+      if (!info.txp.available) return null;
+      if (info.txpRgba === undefined) info.txpRgba = decodeTxpImage(info.txp.bytes, info.txp.tex)?.rgba || null;
+      return info.txpRgba ? { w, h: ih, fourcc, data: info.txpRgba } : null;
+    }
     if (info.hd) {                                             // PS3 port: decoded CTXR, cached on the info
       if (info.hdRgba === undefined) info.hdRgba = decodeCtxr(info.hd)?.rgba || null;
       return info.hdRgba ? { w, h: ih, fourcc, data: info.hdRgba } : null;

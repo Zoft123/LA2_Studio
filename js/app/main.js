@@ -1,6 +1,7 @@
 // LA2 Studio: browser UI.
 import { FileListFS, HandleFS, HttpFS, Library, dirname, basename, ext } from './library.js';
 import { LA2, OBJ_TYPES, PACKETS, SECTION_NAMES, OBJ_DEF_NAMES, statusFields, patch } from '../formats/la2.js';
+import { isLa3, openLa3 } from '../formats/la3.js';
 import { Model } from '../formats/model.js';
 import { readDar, writeDar } from '../formats/archives.js';
 import { encrypt } from '../formats/mgo2crypt.js';
@@ -67,6 +68,13 @@ $('#openDir').onclick = async () => {
 $('#dirInput').onchange = () => { if ($('#dirInput').files.length) openFS(new FileListFS($('#dirInput').files)); };
 if (!window.showDirectoryPicker) $('#openDirAlt').style.display = 'none';
 
+/** Files that hold layouts: LA2 (MGS4 engine, MGS3 / MGO1), LA3 (Peace Walker) and the DAR archives around them. */
+const LAYOUT_EXT = ['.la2', '.la3', '.dar'];
+/** Layouts that can be viewed and played but not edited: PS2 LA2 (MGS3 / MGO1) and Peace Walker LA3. */
+const viewOnly = la => la && (la.ps2 || la.la3);
+const formatLabel = la => la.la3 ? 'Peace Walker LA3 v' + la.la3.version + ' (PS3 HD, LE) · view only'
+  : la.ps2 ? (la.hd ? 'MGS3 PS3 HD (LE)' : 'PS2 (LE)') : la.le ? 'PC (LE)' : 'PS3 (BE)';
+
 async function openFS(fs) {
   if (S.edits.size && !confirm('Opening another folder discards unsaved edits. Continue?')) return;
   S.edits.clear(); S.texEdits.clear(); updateSaveButtons();
@@ -80,9 +88,9 @@ async function openFS(fs) {
     S.expanded = new Set([fs.name]);
     drawTree();
     // open the first folder with LA2 data
-    const first = [...lib.dirs.keys()].sort().find(d => lib.dirs.get(d).files.some(p => ['.la2', '.dar'].includes(ext(p))));
+    const first = [...lib.dirs.keys()].sort().find(d => lib.dirs.get(d).files.some(p => LAYOUT_EXT.includes(ext(p))));
     if (first) { let d = first; while (d.includes('/')) { S.expanded.add(d); d = dirname(d); } drawTree(); await selectFolder(first); }
-    else msg('No .la2 or .dar files in this folder', true);
+    else msg('No .la2, .la3 or .dar files in this folder', true);
   } finally { busy(-1); }
 }
 
@@ -91,7 +99,7 @@ function treeCounts() {
   const lib = S.lib, totals = new Map();
   const dirs = [...lib.dirs.keys()].sort((a, b) => b.length - a.length);
   for (const d of dirs) {
-    let t = lib.dirs.get(d).files.filter(p => ['.la2', '.dar'].includes(ext(p))).length;
+    let t = lib.dirs.get(d).files.filter(p => LAYOUT_EXT.includes(ext(p))).length;
     for (const s of lib.dirs.get(d).subdirs) t += totals.get(s) || 0;
     totals.set(d, t);
   }
@@ -105,7 +113,7 @@ function drawTree() {
   const walk = (d, depth) => {
     if (!totals.get(d)) return;
     const e = lib.dirs.get(d), subs = [...e.subdirs].filter(s => totals.get(s)).sort();
-    const own = e.files.filter(p => ['.la2', '.dar'].includes(ext(p))).length;
+    const own = e.files.filter(p => LAYOUT_EXT.includes(ext(p))).length;
     const open = S.expanded.has(d);
     out.push(`<div class="node${d === S.dir ? ' sel' : ''}" data-d="${esc(d)}" style="padding-left:${8 + depth * 13}px" title="${esc(d)}">` +
       `<span class="tw" data-tw="${esc(d)}">${subs.length ? (open ? '▾' : '▸') : ''}</span>${esc(basename(d))}` +
@@ -113,7 +121,7 @@ function drawTree() {
     if (open) for (const s of subs) walk(s, depth + 1);
   };
   for (const r of roots.sort()) walk(r, 0);
-  $('#tree').innerHTML = out.join('') || '<div class="empty">No LA2 data found.</div>';
+  $('#tree').innerHTML = out.join('') || '<div class="empty">No LA2 / LA3 data found.</div>';
 }
 $('#tree').onclick = e => {
   const tw = e.target.closest('[data-tw]');
@@ -130,7 +138,7 @@ async function selectFolder(d) {
   S.dir = d;
   drawTree();
   const g = ++S.gen;
-  busy(1, 'listing LA2 files…');
+  busy(1, 'listing layout files…');
   try {
     const files = await S.lib.la2Files(d, $('#recursive').checked, (i, n, p) => { $('#busy').textContent = `reading archives ${i + 1}/${n}: ${basename(p)}`; });
     if (g !== S.gen) return;
@@ -150,8 +158,8 @@ function drawFiles() {
   const list = S.files.filter(f => words.every(w => f.id.toLowerCase().includes(w)));
   const shown = list.slice(0, 2000);
   $('#files').innerHTML = shown.map((f, i) => `<div class="file${S.file && f.id === S.file.id ? ' sel' : ''}" data-i="${S.files.indexOf(f)}" title="${esc(f.id)}">${S.edits.has(f.id) ? '● ' : ''}${esc(f.id)}</div>`).join('')
-    || `<div class="empty">${S.dir ? 'No LA2 files here. Tick “subfolders” or pick another folder.' : ''}</div>`;
-  $('#fcount').textContent = S.dir ? `${list.length} LA2 files${list.length > shown.length ? ` (first ${shown.length} shown)` : ''}` : '';
+    || `<div class="empty">${S.dir ? 'No layout files here. Tick “subfolders” or pick another folder.' : ''}</div>`;
+  $('#fcount').textContent = S.dir ? `${list.length} layout files${list.length > shown.length ? ` (first ${shown.length} shown)` : ''}` : '';
 }
 $('#files').onclick = e => { const d = e.target.closest('[data-i]'); if (d) openFile(S.files[+d.dataset.i]); };
 
@@ -176,7 +184,7 @@ async function openFile(f, keep = null) {
     }
     const bytes = ed ? ed.bytes : await S.lib.la2Bytes(f);
     if (g !== S.gen) return;
-    const la = new LA2(bytes);
+    const la = isLa3(bytes) ? openLa3(bytes) : new LA2(bytes);
     $('#busy').textContent = 'loading textures…';
     await S.lib.prepare(la.texKeys, S.texEdits);
     if (g !== S.gen) return;
@@ -203,9 +211,14 @@ async function openFile(f, keep = null) {
     }).join('');
     $('#alsoAdd').innerHTML = '<option value="">+ also play…</option>' + pd.innerHTML.replace(/^<option value="-1">Initial state<\/option>/, '');
     if (keep) { pd.value = keep.action; S.also = S.also.filter(i => i < la.actions.length); S.sel = keep.sel !== null && keep.sel < la.objects.length ? keep.sel : null; S.tab = keep.tab; }
-    else { pd.value = '-1'; S.also = gameLayers(la); }
+    else {
+      pd.value = '-1'; S.also = gameLayers(la);
+      // most Peace Walker layouts start hidden (or fully transparent) and are shown by an action: open those on their
+      // first action
+      if (la.la3 && la.actions.length && !S.scene.primitives().some(p => p.cols.some(c => c[3] > 0))) pd.value = '0';
+    }
     drawAlso();
-    $('#info').textContent = `${f.id} · v${(la.version & 0xFFFF).toString(16)} · ${la.ps2 ? (la.hd ? 'MGS3 PS3 HD (LE)' : 'PS2 (LE)') : la.le ? 'PC (LE)' : 'PS3 (BE)'} · ${la.objects.length} objects · ${la.actions.length} actions · ${la.tex_tbl.length} textures${ed ? ' · edited' : ''}`;
+    $('#info').textContent = `${f.id} · ${la.la3 ? '' : 'v' + (la.version & 0xFFFF).toString(16) + ' · '}${formatLabel(la)} · ${la.objects.length} objects · ${la.actions.length} actions · ${la.tex_tbl.length} textures${ed ? ' · edited' : ''}`;
     $('#info').title = f.path + (f.entry ? ' :: ' + f.entry : '');
     $('#view').classList.add('on'); $('#stageEmpty').hidden = true;
     loadTimeline();
@@ -420,7 +433,7 @@ $('#dragmove').onchange = () => document.body.classList.toggle('dragmode', $('#d
 function current() { return S.edits.get(S.file.id)?.bytes || S.bytes; }
 async function edit(fn, label = 'edited') {
   if (!S.file) return;
-  if (S.la && S.la.ps2) { msg('Editing PS2 (MGS3 / MGO1) layouts is not supported yet: view and playback only', true); return; }
+  if (viewOnly(S.la)) { msg(`Editing ${S.la.la3 ? 'Peace Walker LA3' : 'PS2 (MGS3 / MGO1)'} layouts is not supported yet: view and playback only`, true); return; }
   const before = current();
   const m = new Model(before);
   const r = fn(m);
@@ -481,6 +494,8 @@ function download(blob, name) {
 }
 function updateSaveButtons() {
   $('#saveTex').disabled = !S.texEdits.size;
+  // Peace Walker LA3 layouts are view-only: nothing to save
+  $('#saveLa2').disabled = $('#saveDar').disabled = !!(S.la && S.la.la3);
   $('#revert').disabled = !(S.file && S.edits.has(S.file.id));
   saveSession();
 }
@@ -560,7 +575,7 @@ $('#exportPng').onclick = () => {
   render(null, false);
   const px = renderer.pixels();
   render();
-  download(encodePNG(px.w, px.h, px.rgba), basename(S.file.entry || S.file.path).replace(/\.la2$/i, '') + `_${$('#action').value}_${$('#frame').value}.png`);
+  download(encodePNG(px.w, px.h, px.rgba), basename(S.file.entry || S.file.path).replace(/\.la[23]$/i, '') + `_${$('#action').value}_${$('#frame').value}.png`);
 };
 let exportCancel = false;
 $('#exportCancel').onclick = () => { exportCancel = true; };
@@ -571,7 +586,7 @@ $('#exportAnim').onclick = async () => {
   if (a < 0) { msg('Pick an action first'); return; }
   let fmt = $('#exportFmt').value;
   const video = !!VIDEO_FORMATS[fmt];
-  const baseName = basename(S.file.entry || S.file.path).replace(/\.la2$/i, '') + `_action${a}`;
+  const baseName = basename(S.file.entry || S.file.path).replace(/\.la[23]$/i, '') + `_action${a}`;
   // long videos stream straight to disk where the browser allows it (asked first: it needs the click)
   let fileHandle = null;
   if (video && window.showSaveFilePicker) {
@@ -817,6 +832,7 @@ function bindFields(P) {
 }
 /** Fixed-size field: patch in place, recorded like any other edit. */
 async function patchEdit(off, fmt, v, label = 'saved') {
+  if (viewOnly(S.la)) { msg('This layout is view-only', true); return; }
   const before = current(), after = patch(new LA2(before), off, fmt, v);
   const e = editEntry();
   e.undo.push(before); e.redo = []; e.bytes = after;
@@ -984,9 +1000,9 @@ function tabTextures(P) {
   const rows = la.texKeys.map((h, i) => ({ i: i + 1, h, name: la.tex_tbl[i][0], info: lib.lookup(h) }));
   P.innerHTML = '<div class="texgrid">' + rows.map(r => `<div class="tex" data-h="${r.h}">` +
     (r.info ? `<canvas data-tc="${r.i}"></canvas>` : '<div class="dim small" style="padding:20px 4px">not found in this folder</div>') +
-    `<div class="cap">#${r.i} · ${hex(r.name)}${la.ps2 ? ' · TRI ' + hex(la.tex_tbl[r.i - 1][1]) : ''}${r.info ? ` · ${r.info.w}×${r.info.h}` : ''}</div>` +
+    `<div class="cap">#${r.i} · ${hex(r.name)}${la.ps2 ? ' · TRI ' + hex(la.tex_tbl[r.i - 1][1]) : la.la3 ? ' · TXP ' + hex(la.tex_tbl[r.i - 1][1]) : ''}${r.info ? ` · ${r.info.w}×${r.info.h}` : ''}</div>` +
     (r.info ? `<div class="cap" title="${esc(r.info.loc)}">${esc(r.info.loc.split('|').map((s, k) => k ? s : basename(s)).join(' · '))}</div>
-      <div class="acts"><a data-dl="${r.i}">PNG</a>${la.ps2 ? '' : `<label>replace…<input type="file" accept="image/png,image/*" data-rep="${r.i}" hidden></label>`}</div>` : '') + '</div>').join('') + '</div>' +
+      <div class="acts"><a data-dl="${r.i}">PNG</a>${viewOnly(la) ? '' : `<label>replace…<input type="file" accept="image/png,image/*" data-rep="${r.i}" hidden></label>`}</div>` : '') + '</div>').join('') + '</div>' +
     (rows.some(r => !r.info) ? '<div class="pad"><button id="searchAll">Search everything for missing textures</button> <span class="dim small">indexes every archive in the opened folder</span></div>' : '') +
     '<div class="pad dim small">Pink outlines are the UV rectangles objects use. “replace…” imports an image (resized to the texture; atlas regions are pasted into their atlas), re-encodes it as DXT with the same mip layout and keeps an edited copy of the DLZ; “Save textures” downloads it.</div>';
   // thumbnails with UV outlines
@@ -1007,8 +1023,11 @@ function tabTextures(P) {
       const pts = la.uv_tbl[u];
       if (!pts) continue;
       const off = la.version === 0x10009 ? [0, 0] : [-info.ox, -info.oy];
-      if (la.ps2) {          // PS2: 0..65535 of the texture region
-        const q = pts.map(([x, y]) => [info.u0 - info.ox + x / 65535 * info.uw, info.v0 - info.oy + y / 65535 * info.vh]);
+      if (la.ps2 || la.la3) {  // PS2: 0..65535 of the texture region; LA3: 1/16 texel of its layout size
+        const s16 = v => v > 0x7FFF ? v - 0x10000 : v;
+        const q = pts.map(([x, y]) => la.la3
+          ? [info.u0 - info.ox + s16(x) / la.uvUnit / info.lw * info.uw, info.v0 - info.oy + s16(y) / la.uvUnit / info.lh * info.vh]
+          : [info.u0 - info.ox + x / 65535 * info.uw, info.v0 - info.oy + y / 65535 * info.vh]);
         if (q.length === 2) ctx.strokeRect(q[0][0], q[0][1], q[1][0] - q[0][0], q[1][1] - q[0][1]);
         continue;
       }
@@ -1050,7 +1069,7 @@ function tabTextures(P) {
 }
 
 function tabTables(P) {
-  if (S.la.ps2) { P.innerHTML = '<div class="pad dim small">The tables editor does not support PS2 (MGS3 / MGO1) layouts yet.</div>'; return; }
+  if (viewOnly(S.la)) { P.innerHTML = `<div class="pad dim small">The tables editor does not support ${S.la.la3 ? 'Peace Walker LA3' : 'PS2 (MGS3 / MGO1)'} layouts yet.</div>`; return; }
   const m = new Model(current());
   const rows = {
     color: (m.color_tbl || []).map(l => l.map(c => [...c])),
@@ -1130,6 +1149,7 @@ function tabKeys(P) {
 
 function tabFile(P) {
   const la = S.la, d = la.data, r = la.r;
+  if (la.la3) return tabFileLa3(P);
   const offs = SECTION_NAMES.map((n, i) => [n, r.u32(4 + 4 * i)]);
   const sorted = offs.filter(([, o]) => o).map(([, o]) => o).sort((a, b) => a - b).concat([d.length]);
   const size = o => o ? sorted[sorted.indexOf(o) + 1] - o : 0;
@@ -1140,6 +1160,19 @@ function tabFile(P) {
     <div class="section"><h3>Layers</h3><table>${la.layers.map(([h, st, c], i) => row(i + ' #' + hex(h), c + ' objects', 'status ' + st + (st & 1 ? ' (display off)' : ''))).join('') || row('none', '')}</table></div>
     <div class="section"><h3>Fonts</h3><table>${la.fonts.map((f, i) => row('font ' + (i + 1), '#' + hex(f.hash), f.glyphs.size + ' glyphs')).join('') || row('none', '')}</table></div>
     <div class="section dim small">${la.actions.length} actions (${la.named.size} named) · ${la.nblocks} status blocks · TRI ${la.tri.map(t => hex(t)).join(', ') || '—'}</div>`;
+}
+
+/** LA3 file summary: its chunk sections (the LA2 view of it is built in memory). */
+function tabFileLa3(P) {
+  const la = S.la, L = la.la3;
+  const row = (a, b, c = '') => `<tr><td class="k">${a}</td><td>${b}</td><td class="dim">${c}</td></tr>`;
+  const names = { 0x20: 'objects', 0x21: 'object records', 0x40: 'action records', 0x41: 'key lists', 0x50: 'keys',
+    0x51: 'key data', 0x80: 'textures', 0x81: 'texture hashes', 0x90: 'point lists', 0x91: 'points', 0xA0: 'colour lists',
+    0xA1: 'colours', 0xB0: '?', 0xB1: '?', 0xC0: 'texts', 0xC1: 'text bytes', 0xD0: 'fonts', 0xD1: 'glyphs' };
+  P.innerHTML = `<div class="section"><b>${esc(S.file.id)}</b><div class="dim small">Peace Walker LA3 ("FEL" version ${L.version}) · little-endian (PS3 HD port) · ${la.source.length} bytes · ${L.ticksPerSecond} ticks per second · view only</div></div>
+    <div class="section"><h3>Sections</h3><table>${[...L.sections].filter(([t]) => t).map(([t, s]) => row('0x' + t.toString(16).toUpperCase().padStart(2, '0'), names[t] || '', s.size + ' bytes at 0x' + (s.offset - 4).toString(16))).join('')}</table></div>
+    <div class="section"><h3>Fonts</h3><table>${la.fonts.map((f, i) => row('font ' + (i + 1), '#' + hex(f.hash), f.glyphs.size + ' glyphs')).join('') || row('none', '')}</table></div>
+    <div class="section dim small">${L.objects.length} objects · ${la.actions.length} actions from ${L.tracks.length} action records · ${L.keys.length} keys · ${L.lists.length} point lists · ${L.colors.length} colour lists · ${L.texts.length} texts</div>`;
 }
 
 // ---- development / automated tests: ?dev=<url of tests/serve.py> [&folder=...][&file=...] -------------------------

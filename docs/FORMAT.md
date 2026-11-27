@@ -1,7 +1,8 @@
 # LA2 format reference
 
 LA2 is the 2D layout and animation format of *libla*, the interface library of the MGS4 engine (Metal Gear Solid 4,
-Metal Gear Online 2, Metal Gear Arcade). This document describes the format as LA2 Studio reads and writes it.
+Metal Gear Online 2, Metal Gear Arcade). This document describes the format as LA2 Studio reads and writes it, then
+the PS2 version (MGS3 / MGO1, and MGS3's PS3 HD port) and Peace Walker's LA3.
 Structure names follow the engine's own naming where it is known.
 
 ## Conventions
@@ -270,3 +271,67 @@ named with 8 hex digits (`00fdea15.tri`). Differences:
   Formats are `CELL_GCM_TEXTURE_*`: 0x85 A8R8G8B8 (bytes A R G B), 0x9E D8R8G8B8 (opaque), 0x86–0x88 DXT1/3/5;
   flag 0x20 = linear rows of `pitch` bytes, otherwise RSX-swizzled (Morton order). Alpha keeps the PS2 scale
   (0x80 = opaque).
+
+## Peace Walker: LA3 (`.la3`) and TXP (`.txp`)
+
+*Metal Gear Solid: Peace Walker* (PSP; read here from the PS3 HD port, `NPUB30611`, whose files stay
+little-endian and are byte-swapped by the game on load, EBOOT `sub_C00B5C`) uses **LA3**, libla's successor: the same
+object types and the same ideas (status, set / morph / wait keys, 300 ticks per second), packed into chunks. LA2
+Studio reads LA3 and converts it into an LA2 in memory, so it is viewed and played by the same engine; LA3 files are
+view-only. Everything below was read from the files and the EBOOT's byte-order routines; the names are ours, and
+the runtime player has not been found, so a few meanings (marked) are inferred from the data.
+
+Where: `disc0_rel/stage/<name>/` (`cache.dar` / `resident.dar` hold the `.la3` files, `cache<N>.qar` /
+`resident<N>.qar` the `.txp` textures) and `SLOT.DAT` (needs unpacking; each slot holds loose `.la3` and `.txp`).
+
+**Header** (16 bytes): `"FEL"` + version byte (7 in 5527 of 5938 files; 5 and 4 in the rest, not read yet), `u32 0`,
+`u16`, `u16 0x0404`, `u32 300` (ticks per second).
+
+**Chunks** follow: `{u8 type, u24 size}` + `size` bytes, until type 0. Each section starts with `{u16 count, u16 x}`.
+
+| Type | Contents |
+|---|---|
+| 0x20 | objects: `count` × `u16` offset into 0x21 |
+| 0x21 | object `{u16 id, u16 parent (0xFFFF = none), u32 name hash, u32 type (low nibble = LA2 object type, high bits flags), u32 mask, u32 ?}`, then one 16-bit value per set mask bit (lowest bit first): the initial state |
+| 0x40 | action records, 16 bytes: `{u32 hash, u32 object name hash, u32 length (ticks), u16 key count, u16 first}` into 0x41. Each record animates one object; records whose hashes share the low 24 bits (the high byte numbers them 1, 2, …) form one action |
+| 0x41 | `u16` key numbers (into 0x50) |
+| 0x50 | `count` × `u32` offset into 0x51 |
+| 0x51 | key `{u16 type, u16 size, …}`: 0 end · 1 set `{u32 mask, values}` · 2 morph `{u32 ticks, u32 mask, values}` · 3 wait `{u32 ticks}` · 4 signals for the game, `u32` pairs `(command, argument)` (e.g. 7 / 0 = show / hide caption *n*) · 5 `{u32, u32}` (one file) |
+| 0x80 | textures: `{u16 count, u16 hash count}`, then `count` × `{u8 texture-hash index, u8 TXP-hash index}` (`u16`s when there are 256 or more hashes) |
+| 0x81 | the hashes, `u32`, sorted |
+| 0x90 | point lists: `count` × `{u8 points, u8 ?, u16 first}` into 0x91 |
+| 0x91 | points `{i16 x, i16 y}`: positions and sizes in 1/16 px, UVs in 1/16 texel |
+| 0xA0 / 0xA1 | colour lists `{u16 colours, u16 first}` into `{u8 r, g, b, a}` (alpha 0x80 = opaque, as LA2) |
+| 0xC0 / 0xC1 | texts `{u16 length, u16 offset}` into the text bytes |
+| 0xD0 / 0xD1 | fonts `{u32 hash, u16 glyphs, u16 first}` into glyphs `{u32 code, u16 size list, u16 UV list}`: the size list holds the cell (w, h in 1/16 px), the UV list its two corners |
+| 0xB0 / 0xB1 | unknown (400 files) |
+
+**Mask bits** (object state and set / morph keys): 2 visible · 4 position list · 5 colour list · 6 size list
+(Box, Sprt, String) · 7 UV list · 9 ? (0…6) · 10 String spacing list · 11 text · 16 rotation (65536 = full turn) ·
+17 scale (256 = 1.0) · 18 blend, inferred (1 on glow sprites: additive; 2: subtractive) · 19 texture · 20 / 28 RSprt
+flags (?) · 22 font · 23 alignment (0 left, 1 right, 2 centre); 12, 13, 24…27 Typing only.
+
+Layout coordinates are PSP-screen sized (480 × 272); many layouts start hidden and are shown by their actions.
+Text made only of `@` reserves room for text the game writes at run time (hidden unless placeholders are shown).
+
+**UVs** (sprites and glyphs) are in 1/16 texel of the texture's own size (its `w` × `h` in the TXP). The HD port
+redrew many textures larger (a 32 × 32 texture can be a 32 × 128 DDS), so they are scaled onto the image; the
+layouts keep their own distance from the edges (no quarter-texel inset).
+
+**TXP** (little-endian):
+
+- header `{u32 flags, u32 own hash, u32 image count, u32 texture count, u32 ?, u32 image table (0x20), u32 texture
+  table, u32 data start}`. Flags 0: paletted pixels inside the file; 1: DDS inside the file (the HD port's
+  redrawn textures; every UI texture the layouts use); 2: pixels held elsewhere (model / effect textures; not decoded).
+- image, 20 bytes: `{u16 format, u16 width, u16 height, u16 0, u32 0, u32 pixel offset, u32 0}`; width and height
+  are `log2(buffer size) << 12 | size`. Format (low 3 bits) 4: 4-bit indices, 5: 8-bit indices, both PSP-swizzled
+  (16-byte × 8-row blocks) with an RGBA8888 palette (full 0…255 alpha); 6: a DDS (DXT1 / DXT5) at the texture's
+  palette offset.
+- texture, 40 bytes: `{u32 flags, u32 hash, u32 image record offset, u32 palette (or DDS) offset, f32 u, f32 v,
+  f32 width, f32 height (fractions of the image buffer), u16 width, u16 height (texels), u32 ?}`. Layouts name a
+  texture by (texture hash, TXP hash).
+
+**PW QAR** (`*.qar`, little-endian): the files at 0x1000 boundaries, then (at the offset in the last `u32`)
+`{u32 count, count × (u32 id = StrCode24(name) | type << 24, u32 size)}` and the names, NUL-terminated, in the same
+order. (Tools that pack the files back to back instead cut every file but the first wrongly.) **PW DAR** is the
+MGS4 DAR layout, little-endian. StrCode24: `x = ((x << 5 | x >> 19) + c) & 0xFFFFFF` over the name's bytes.
