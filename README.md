@@ -1,6 +1,6 @@
 # LA2 Studio
 
-**View, play, edit and export LA2 layouts — the animated 2D interface files of the MGS4 engine, and now of Metal Gear Solid 3 / Metal Gear Online on PS2 — right in your browser.**
+**View, play, edit and export LA2 layouts — the animated 2D interface files of the MGS4 engine, and now of Metal Gear Solid 3 / Metal Gear Online on PS2 and the PS3 HD port of MGS3 — right in your browser.**
 
 LA2 is the layout and animation format of *libla*, the 2D library of the engine behind **Metal Gear Solid 4**,
 **Metal Gear Online 2** and **Metal Gear Arcade**. Every HUD, menu, icon, loading screen and telop in those games is
