@@ -224,6 +224,8 @@ MGO2's stage archives are encrypted with a key derived from their folder below `
 
 ## PS2: Metal Gear Solid 3 / Metal Gear Online (version 0x10007)
 
+(See the end of this section for the PS3 HD port.)
+
 The PS2 libla writes the same structures little-endian, with these differences:
 
 - The header has 11 section offsets (no `ofLayer`); every object is on layer 0.
@@ -241,3 +243,25 @@ The PS2 libla writes the same structures little-endian, with these differences:
   in fractions of the TW × TH GS texture, which several textures share. Decoding follows otac0n/Codec's
   `TriFile.cs` (MIT).
 
+
+### PS3 HD port of Metal Gear Solid 3
+
+Same layout format (version 0x10007, little-endian), in `mgs3/<lang>/stage/<name>/cache` and `mgs3/<lang>/slot/…`,
+named with 8 hex digits (`00fdea15.tri`). Differences:
+
+- Bit 28 of the first header offset (`ofObj | 0x10000000`) marks layouts redone in 1280×720 coordinates; the others
+  keep PS2 coordinates. Mask it off to get the offset.
+- The `.tri` files keep their records but their image and CLUT blocks are all zeros. Each texture is instead
+  `<texture hash>[-name].ctxr`, found in the layout folder, its `_ps3` subfolder, or the language-neutral
+  `mgs3/stage/<name>/cache/_ps3` (most specific first). One CTXR is one TRI region: the whole texels from
+  `floor(u)` to `u + w + frac(u)` (the region is texel-centred), redrawn at any size, not always uniformly scaled
+  (a 511×399 region becomes 1280×720). Records with an empty region are PS3-only textures that use the whole CTXR.
+- Many layouts reference TRIs that the port does not ship in their language folder (e.g. `ce43e2`, only under
+  `sp/`); their CTXRs are still beside the layout, so textures are looked up by texture hash, using the whole CTXR.
+- **CTXR** is a GTF-like texture, big-endian: `{u32 0x02000101, u32 data size, u32 1, u32 id, u32 data offset (0x80),
+  u32 data size}`, then either `+0x18 {u8 format, u8 mipmaps, u8 dimension, u8 cubemap, u32 remap, u16 w, u16 h,
+  u32 depth}` (it repeats remap / w / h at +0x28) or (most stage textures) three unknown words at +0x18 and `{format, mipmaps, dimension, cubemap}` at
+  +0x24; both continue `+0x28 u32 remap, +0x2C u16 width, u16 height, +0x30 u32 depth, +0x34 u32 pitch`.
+  Formats are `CELL_GCM_TEXTURE_*`: 0x85 A8R8G8B8 (bytes A R G B), 0x9E D8R8G8B8 (opaque), 0x86–0x88 DXT1/3/5;
+  flag 0x20 = linear rows of `pitch` bytes, otherwise RSX-swizzled (Morton order). Alpha keeps the PS2 scale
+  (0x80 = opaque).

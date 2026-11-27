@@ -204,7 +204,7 @@ async function openFile(f, keep = null) {
     if (keep) { pd.value = keep.action; S.also = S.also.filter(i => i < la.actions.length); S.sel = keep.sel !== null && keep.sel < la.objects.length ? keep.sel : null; S.tab = keep.tab; }
     else { pd.value = '-1'; S.also = gameLayers(la); }
     drawAlso();
-    $('#info').textContent = `${f.id} · v${(la.version & 0xFFFF).toString(16)} · ${la.ps2 ? 'PS2 (LE)' : la.le ? 'PC (LE)' : 'PS3 (BE)'} · ${la.objects.length} objects · ${la.actions.length} actions · ${la.tex_tbl.length} textures${ed ? ' · edited' : ''}`;
+    $('#info').textContent = `${f.id} · v${(la.version & 0xFFFF).toString(16)} · ${la.ps2 ? (la.hd ? 'MGS3 PS3 HD (LE)' : 'PS2 (LE)') : la.le ? 'PC (LE)' : 'PS3 (BE)'} · ${la.objects.length} objects · ${la.actions.length} actions · ${la.tex_tbl.length} textures${ed ? ' · edited' : ''}`;
     $('#info').title = f.path + (f.entry ? ' :: ' + f.entry : '');
     $('#view').classList.add('on'); $('#stageEmpty').hidden = true;
     loadTimeline();
@@ -1126,7 +1126,7 @@ function tabFile(P) {
   const sorted = offs.filter(([, o]) => o).map(([, o]) => o).sort((a, b) => a - b).concat([d.length]);
   const size = o => o ? sorted[sorted.indexOf(o) + 1] - o : 0;
   const row = (a, b, c = '') => `<tr><td class="k">${a}</td><td>${b}</td><td class="dim">${c}</td></tr>`;
-  P.innerHTML = `<div class="section"><b>${esc(S.file.id)}</b><div class="dim small">version 0x${la.version.toString(16)} · ${la.ps2 ? 'little-endian (PS2)' : la.le ? 'little-endian (PC)' : 'big-endian (PS3)'} · ${d.length} bytes${S.edits.has(S.file.id) ? ' · edited' : ''}</div></div>
+  P.innerHTML = `<div class="section"><b>${esc(S.file.id)}</b><div class="dim small">version 0x${la.version.toString(16)} · ${la.ps2 ? (la.hd ? 'little-endian (MGS3 PS3 HD port, 1280×720 layout)' : 'little-endian (PS2)') : la.le ? 'little-endian (PC)' : 'big-endian (PS3)'} · ${d.length} bytes${S.edits.has(S.file.id) ? ' · edited' : ''}</div></div>
     <div class="section"><h3>Sections (tagLA2_HEADER)</h3><table>${offs.map(([n, o]) => row(n, o ? '0x' + o.toString(16) : '—', o ? size(o) + ' bytes' : '')).join('')}</table></div>
     <div class="section"><h3>Object counts (tagLA2_OBJ_DEF_HEADER)</h3><div class="dim small">Rebuilt on every structural edit.</div><table>${OBJ_DEF_NAMES.map((n, i) => row(n, la.obj_counts[i])).join('')}</table></div>
     <div class="section"><h3>Layers</h3><table>${la.layers.map(([h, st, c], i) => row(i + ' #' + hex(h), c + ' objects', 'status ' + st + (st & 1 ? ' (display off)' : ''))).join('') || row('none', '')}</table></div>

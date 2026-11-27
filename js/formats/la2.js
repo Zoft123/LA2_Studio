@@ -12,6 +12,8 @@
 // Files are big-endian on PS3; the PC game (Metal Gear Arcade) ships them little-endian.
 // Version 0x10007 (Metal Gear Solid 3 / Metal Gear Online on PS2, little-endian) has 11 section offsets (no layers);
 // its UV and font UVs are 0..65535 of the texture region, and textures are named by (texture hash, TRI hash).
+// In the PS3 HD port, bit 28 of ofObj (0x10000000) marks layouts redone in 1280x720 coordinates (la.hd); the others
+// keep PS2 coordinates.
 import { Reader, latin1 } from '../core/bin.js';
 import { triTexKey } from './tri.js';
 
@@ -145,7 +147,9 @@ export class LA2 {
     if ((this.version & 0xFFFF0000) !== 0x10000) throw new Error('not an LA2 file');
     this.offsets = {};
     this.ps2 = this.version === 0x10007;
-    SECTIONS.forEach((n, i) => { this.offsets[n] = this.ps2 && i >= 11 ? 0 : r.u32(4 + 4 * i); });
+    /** PS3 HD port: layout in 1280x720 coordinates (flag 0x10000000 on ofObj). */
+    this.hd = this.ps2 && (r.u32(4) & 0xF0000000) === 0x10000000;
+    SECTIONS.forEach((n, i) => { this.offsets[n] = this.ps2 && i >= 11 ? 0 : i === 0 && this.ps2 ? r.u32(4) & 0x0FFFFFFF : r.u32(4 + 4 * i); });
     this.objects = this._objects();
     this._indexStatus();
     this.tex_tbl = this._pairs('tex_tbl');

@@ -5,6 +5,7 @@ import { readDar, readQar, inflateDlz } from '../formats/archives.js';
 import { decrypt, checksumOk, keyForPath, discEncryption } from '../formats/mgo2crypt.js';
 import { TexturePool, decodeDxt, parseTxn, RGBA } from '../formats/textures.js';
 import { parseTri, triTexKey } from '../formats/tri.js';
+import { ctxrDirs, ctxrHash } from '../formats/ctxr.js';
 
 const dirname = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
 const basename = p => p.slice(p.lastIndexOf('/') + 1);
@@ -65,8 +66,8 @@ export class HttpFS {
 
 // ---- library ------------------------------------------------------------------------------------------------
 const TEX_EXT = new Set(['.qar', '.txn', '.dlz', '.tri']);
-/** TRI hash of a PS2 texture group, from its file name ("194580.tri"). */
-const triHash = p => { const n = basename(p).slice(0, -4); return /^[0-9a-f]{1,6}$/i.test(n) ? parseInt(n, 16) : null; };
+/** TRI hash of a PS2 texture group, from its file name ("194580.tri"; "00194580.tri" in the PS3 HD port). */
+const triHash = p => { const n = basename(p).slice(0, -4); return /^[0-9a-f]{1,8}$/i.test(n) && parseInt(n, 16) <= 0xFFFFFF ? parseInt(n, 16) : null; };
 const isTexSource = p => ['.qar', '.txn', '.tri'].includes(ext(p));
 const BUDGET_POOLS = 512 << 20, BUDGET_IMAGES = 384 << 20;
 
@@ -264,6 +265,7 @@ export class Library {
     return index;
   }
   async openTextures(dir, progress) {
+    this.texDir = dir;
     this.texDirs = this.textureDirs(dir);
     this.index = await this.indexTextures(this.texDirs, progress);
     this.fallback = null;
@@ -291,10 +293,18 @@ export class Library {
     const files = this.dirs.get(dir)?.files || [];
     const qar = files.find(p => basename(p) === base + '.qar'), txn = files.find(p => basename(p) === base + '.txn');
     if (base === '@tri') {
+      // PS3 port: the TRIs are stubs and each texture is a <hash>.ctxr, in the folder, its _ps3 subfolder or the
+      // language-neutral one (mgs3/us/stage/x/cache -> mgs3/stage/x/cache/_ps3); the most specific wins
+      const hd = new Map();
+      for (const d of ctxrDirs(dir)) for (const p of this.dirs.get(d)?.files || []) {
+        const h = ext(p) === '.ctxr' ? ctxrHash(basename(p)) : null;
+        if (h !== null && !hd.has(h)) hd.set(h, p);
+      }
       for (const p of files.filter(p => ext(p) === '.tri')) {
         const th = triHash(p);
-        if (th !== null) try { pool.addTri(await this.fs.read(p), th); } catch (x) { /* not a TRI */ }
+        if (th !== null) try { pool.addTri(await this.fs.read(p), th, hd); } catch (x) { /* not a TRI */ }
       }
+      pool.hd = hd;
       this.pools.set(loc, pool);
       return pool;
     }
@@ -328,7 +338,10 @@ export class Library {
   }
   /** Locations of a texture: the folder's own first, then the wide search. */
   locations(h) {
-    return [...(this.index?.get(h) || []), ...((this.fallback?.get(h) || []).filter(l => !(this.index?.get(h) || []).includes(l)))];
+    const own = this.index?.get(h) || [];
+    // MGS3 PS3 port: a TRI-qualified key with no TRI record nearby may still have its CTXR beside the layout
+    const hd = h > 0xFFFFFF && this.texDir && !own.length ? [this.texDir + '|@tri'] : [];
+    return [...own, ...((this.fallback?.get(h) || []).filter(l => !own.includes(l))), ...hd];
   }
   /** Load everything needed for these texture hashes (async); afterwards lookup() / image() answer synchronously. */
   async prepare(hashes, overrides) {
@@ -338,7 +351,8 @@ export class Library {
       let hit = null, first = null;
       for (const loc of this.locations(h)) {
         const pool = await this.pool(loc, overrides);
-        const info = pool.infos.get(h);
+        const info = pool.info(h);
+        if (info?.hdSrc && !info.hd) try { pool.setHd(info, await this.fs.read(info.hdSrc)); } catch (x) { info.hdSrc = null; }
         first = first || info;
         if (info && pool.raw(h)) { hit = { loc, info, pool }; break; }
       }

@@ -10,7 +10,8 @@ WebP or APNG.
 
 The format goes back to the PS2: **Metal Gear Solid 3: Snake Eater / Subsistence** and **Metal Gear Online** (MGO1)
 use an earlier version of libla. Their layouts and `.tri` textures (PS2 GS memory) can be viewed, played and
-exported too; editing them is not supported yet.
+exported too; editing them is not supported yet. The **PS3 HD port of MGS3** works as well, with its HD `.ctxr`
+textures.
 
 **[Open LA2 Studio →](https://zoft123.github.io/LA2_Studio/)**
 
@@ -124,6 +125,7 @@ animations, or when you need every pixel exact.
 | Metal Gear Online 2 | PS3 | inside `stage/*/*.dar` | stage archives are encrypted; decrypted automatically |
 | Metal Gear Arcade | PC | `stage/*/Dar/*.la2`, `*.dar` | little-endian archives |
 | Metal Gear Solid 3 / Metal Gear Online (Subsistence) | PS2 | loose `stage/<name>/<hash>.la2` | view and playback only; textures from the folder's `<hash>.tri` files |
+| Metal Gear Solid 3 HD | PS3 | `mgs3/<lang>/stage/<name>/cache/*.la2`, `mgs3/<lang>/slot/…` | view and playback only; HD textures from `mgs3/stage/<name>/cache/_ps3/*.ctxr` — open the whole `mgs3` folder (extracted from `mgs3.psarc`) so both trees are included |
 
 Open the folder that holds the files — a single stage, a `slotdat` folder, `USRDIR/o`, or a whole game tree.
 LA2 Studio lists the folders that contain layouts; pick one to see its files.
@@ -188,6 +190,11 @@ to an even size. Cropping changes framing only; it does not move objects or chan
   Extracted `Dar` layouts also find sibling `Qar` TXNs and their parent folder's DLZs. MGO2's
   `o/stage/<name>` and `o/dl/p/stage/<name>` folders are paired automatically. If something is still missing,
   *Search everything* in the Textures tab indexes every archive in the opened folder.
+- **MGS3 HD (PS3)** keeps the layouts' `.tri` files only as empty stubs: each texture is a `<texture hash>.ctxr`
+  in the stage's language-neutral `_ps3` folder (`mgs3/us/stage/title/cache` → `mgs3/stage/title/cache/_ps3`),
+  redrawn at a higher resolution, and is used in place of the TRI region. Many layouts name TRIs the port no
+  longer ships; their textures are still found by texture hash. A few textures have no CTXR in the game data and
+  are reported missing.
 - **PS2 textures** (MGS3 / MGO1) are the `.tri` files of the same folders, named by their TRI hash; a layout's
   texture table names both the texture and the TRI it comes from.
 - **MGO2 DLC textures** follow the game's own resolution: a patch folder's `.dci` index remaps a patched TXN's
@@ -248,7 +255,8 @@ Plain ES modules, no build step. Vendored libraries (MIT): [fflate](https://gith
 index.html, css/          the page
 js/core/bin.js            binary reading / writing, the MGS string hash
 js/formats/               la2.js (reader), model.js (writer and edits), archives.js (DAR / QAR / DLZ),
-                          textures.js (TXN / DLD / DXT decoding), tri.js (PS2 TRI / GS memory), dxtenc.js (DXT
+                          textures.js (TXN / DLD / DXT decoding), tri.js (PS2 TRI / GS memory), ctxr.js (MGS3 HD
+                          PS3 textures), dxtenc.js (DXT
                           encoding), mgo2crypt.js
 js/engine/                scene.js (state, playback, timeline, draw list), gl.js (WebGL renderer), export.js,
                           playback.js (play modes, export frame schedule), viewport.js (crop geometry)
@@ -257,7 +265,7 @@ js/app/                   main.js (UI), library.js (folders, decryption, texture
 docs/FORMAT.md            format reference
 tests/check.mjs           `npm test`: playback, export, crop and app regression tests
 tests/run.mjs             round-trip tests against your own game files
-tests/ps2-render.mjs      software render of PS2 (MGS3 / MGO1) stage folders to PNG, using the real engine
+tests/ps2-render.mjs      software render of PS2 (MGS3 / MGO1) and MGS3 HD stage folders to PNG, using the real engine
 tests/render.html         WebGL2 alpha and crop checks, run in a browser
 tests/serve.py            development server for automated browser tests
 ```

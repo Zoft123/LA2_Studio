@@ -11,6 +11,7 @@ import zlib from 'node:zlib';
 import { LA2 } from '../js/formats/la2.js';
 import { TexturePool } from '../js/formats/textures.js';
 import { Scene, Timeline } from '../js/engine/scene.js';
+import { ctxrDirs, ctxrHash } from '../js/formats/ctxr.js';
 
 const [out, ...roots] = process.argv.slice(2);
 if (!out || !roots.length) { console.error('usage: node tests/ps2-render.mjs <out folder> <stage folder> ...'); process.exit(2); }
@@ -29,19 +30,26 @@ function png(w, h, rgba) {
 /** Texture source for Scene (lookup) and the rasteriser (image), like Library. */
 function textures(dir) {
   const pool = new TexturePool();
-  for (const f of fs.readdirSync(dir)) {
-    const m = /^([0-9a-f]{6})\.tri$/i.exec(f);
-    if (m) try { pool.addTri(new Uint8Array(fs.readFileSync(path.join(dir, f))), parseInt(m[1], 16)); } catch (e) { /* not a TRI */ }
+  const hd = new Map();      // PS3 port: <hash>.ctxr HD textures (see Library.pool)
+  for (const d of ctxrDirs(dir)) {
+    if (!fs.existsSync(d)) continue;
+    for (const f of fs.readdirSync(d)) { const h = ctxrHash(f); if (h !== null && !hd.has(h)) hd.set(h, path.join(d, f)); }
   }
+  for (const f of fs.readdirSync(dir)) {
+    const m = /^(?:00)?([0-9a-f]{6})\.tri$/i.exec(f);
+    if (m) try { pool.addTri(new Uint8Array(fs.readFileSync(path.join(dir, f))), parseInt(m[1], 16), hd); } catch (e) { /* not a TRI */ }
+  }
+  pool.hd = hd;
+  const load = i => { if (i && i.hdSrc && !i.hd) pool.setHd(i, new Uint8Array(fs.readFileSync(i.hdSrc))); return i; };
   const images = new Map();
   return {
     pool,
     lookup(h) {
-      const i = pool.infos.get(h);
+      const i = load(pool.info(h));
       return i ? { w: i.w, h: i.h, ox: i.ox, oy: i.oy, iw: i.img.w, ih: i.img.h, u0: i.u0, v0: i.v0, uw: i.uw, vh: i.vh } : null;
     },
     image(h) {
-      const i = pool.infos.get(h);
+      const i = load(pool.info(h));
       if (!i) return null;
       const k = i.tri + '|' + i.imgOff;
       if (!images.has(k)) { const r = pool.raw(h); images.set(k, r ? { w: r.w, h: r.h, rgba: r.data } : null); }
@@ -126,7 +134,7 @@ for (const root of roots) {
       try {
         const la = new LA2(new Uint8Array(fs.readFileSync(path.join(dir, f))));
         texRefs += la.texKeys.length;
-        missingTex += la.texKeys.filter(k => !tx.lookup(k)).length;
+        missingTex += la.texKeys.filter(k => !tx.lookup(k) || !tx.image(k)).length;
         const scene = new Scene(la, tx);
         const b = scene.bounds();
         const scale = Math.min(2, 360 / Math.max(b.w, b.h));
