@@ -26,7 +26,10 @@ export class FileListFS {
     this.name = first.split('/')[0] || 'files';
   }
   async list() { return [...this.files].map(([path, f]) => ({ path, size: f.size })); }
-  async read(path) { const f = this.files.get(path); if (!f) throw new Error('no such file: ' + path); return new Uint8Array(await f.arrayBuffer()); }
+  file(path) { const f = this.files.get(path); if (!f) throw new Error('no such file: ' + path); return f; }
+  async read(path) { return new Uint8Array(await this.file(path).arrayBuffer()); }
+  async readRange(path, offset, length) { return new Uint8Array(await this.file(path).slice(offset, offset + length).arrayBuffer()); }
+  async size(path) { return this.file(path).size; }
 }
 
 /** A FileSystemDirectoryHandle (Chromium's showDirectoryPicker): scanned recursively once. */
@@ -48,7 +51,20 @@ export class HandleFS {
     for (const [path, h] of this.handles) out.push({ path, size: null, handle: h });
     return out;
   }
+  async file(path) {
+    const h = this.handles.get(path);
+    if (!h) throw new Error('no such file: ' + path);
+    this.fileCache = this.fileCache || new Map();
+    if (!this.fileCache.has(path)) this.fileCache.set(path, await h.getFile());
+    return this.fileCache.get(path);
+  }
   async read(path) { const h = this.handles.get(path); if (!h) throw new Error('no such file: ' + path); return new Uint8Array(await (await h.getFile()).arrayBuffer()); }
+  /** Part of a file (packed game data is read in ranges; the File is kept for the next range). */
+  async readRange(path, offset, length) {
+    try { return new Uint8Array(await (await this.file(path)).slice(offset, offset + length).arrayBuffer()); }
+    catch (e) { this.fileCache?.delete(path); return new Uint8Array(await (await this.file(path)).slice(offset, offset + length).arrayBuffer()); }
+  }
+  async size(path) { return (await this.file(path)).size; }
 }
 
 /** Development / automated tests: a folder served over HTTP with a JSON listing (see tests/serve.py). */
@@ -57,13 +73,22 @@ export class HttpFS {
   async list() {
     const l = await (await fetch(this.base + '/__list.json')).json();
     this.name = l.name;
+    this.sizes = new Map(l.files);
     return l.files.map(([path, size]) => ({ path, size }));
   }
+  url(path) { return this.base + '/' + path.split('/').slice(1).map(encodeURIComponent).join('/'); }
   async read(path) {
-    const r = await fetch(this.base + '/' + path.split('/').slice(1).map(encodeURIComponent).join('/'));
+    const r = await fetch(this.url(path));
     if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + path);
     return new Uint8Array(await r.arrayBuffer());
   }
+  async readRange(path, offset, length) {
+    const r = await fetch(this.url(path), { headers: { Range: `bytes=${offset}-${offset + length - 1}` } });
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + path);
+    const b = new Uint8Array(await r.arrayBuffer());
+    return r.status === 206 ? b : b.subarray(offset, offset + length);
+  }
+  async size(path) { return this.sizes?.get(path) ?? (await this.read(path)).length; }
 }
 
 // ---- library ------------------------------------------------------------------------------------------------
@@ -76,8 +101,9 @@ function triHash(p) {
   const hash = parseInt(name, 16);
   return hash <= MAX_HASH ? hash : null;
 }
-/** Name hash of a loose TXP (StrCode24 of its file name): the hash of a Portable Ops TXP, which stores none. */
-const txpNameHash = p => strcode(basename(p).replace(/\.[^.]*$/, ''));
+/** Name hash of a loose TXP (StrCode24 of its file name): the hash of a Portable Ops TXP, which stores none. Files
+ *  read from packed game data that only have a hash on disc (<hash>.txp) carry it (fs.nameHash). */
+const txpNameHash = (fs, p) => fs.nameHash?.(p) ?? strcode(basename(p).replace(/\.[^.]*$/, ''));
 const isTexSource = p => ['.qar', '.txn', '.tri', '.txp'].includes(ext(p));
 const isLayout = p => ['.la2', '.la3'].includes(ext(p));
 const BUDGET_POOLS = 512 << 20, BUDGET_IMAGES = 384 << 20;
@@ -125,7 +151,8 @@ export class Library {
   async read(path) {
     if (this.raw.has(path)) return this.raw.get(path);
     let data = await this.fs.read(path);
-    const disc = discEncryption(path);
+    // files inside packed game data (STAGE.DAT, _zar, STAGEDAT.PDT, .psarc, ...) come out plain
+    const disc = this.fs.isVirtual?.(path) ? { encrypted: false } : discEncryption(path);
     const key = disc && !disc.encrypted ? null : this.settings.key || keyForPath(path) || this.keys.get(dirname(path));
     if (disc && !disc.encrypted) { /* plain Blu-ray MGS4 data */ }
     else if (key && data.length >= 0x18 && checksumOk(data, key)) { data = decrypt(data, key); this.encrypted.set(path, key); }
@@ -266,7 +293,7 @@ export class Library {
           continue;
         }
         if (ext(p) === '.txp') {        // Peace Walker / Portable Ops: every loose TXP of a folder shares one pool, "dir|@txp"
-          const txp = parseTxp(await this.fs.read(p), txpNameHash(p));
+          const txp = parseTxp(await this.fs.read(p), txpNameHash(this.fs, p));
           if (txp) for (const t of txp.textures) this._index(index, txpTexKey(t.hash, txp.hash), dirname(p) + '|@txp');
           continue;
         }
@@ -340,7 +367,7 @@ export class Library {
     }
     if (base === '@txp' || (qar && readPwQar(await this.read(qar)))) {
       // Peace Walker: loose TXPs, or the TXPs inside a PW QAR
-      if (base === '@txp') for (const p of files.filter(p => ext(p) === '.txp')) try { pool.addTxp(await this.fs.read(p), txpNameHash(p)); } catch (x) { /* not a TXP */ }
+      if (base === '@txp') for (const p of files.filter(p => ext(p) === '.txp')) try { pool.addTxp(await this.fs.read(p), txpNameHash(this.fs, p)); } catch (x) { /* not a TXP */ }
       else for (const e of readPwQar(await this.read(qar))) if (ext(e.name) === '.txp') try { pool.addTxp(e.data, e.id & 0xFFFFFF); } catch (x) { /* not a TXP */ }
       this.pools.set(loc, pool);
       return pool;

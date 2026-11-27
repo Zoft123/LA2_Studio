@@ -69,7 +69,7 @@ header.setUint32(0, 0x10008); header.setUint32(4, 52);
 const model = new Model(seed); model.addObject(2, { x: 0, y: 0, w: 200, h: 100 });
 const file = { id: 'open-crop.la2', path: 'open-crop.la2' };
 S.tab = 'file'; S.dir = null; S.files = [file];
-S.lib = { la2Bytes: async () => model.build(), prepare: async () => {}, lookup: () => null, imageKey: () => null };
+S.lib = { la2Bytes: async () => model.build(), prepare: async () => {}, lookup: () => null, imageKey: () => null, isPspLayout: () => false };
 crop.close();
 assert.equal(get('cropEnabled').disabled, true); assert.equal(get('cropSelect').disabled, true);
 await window.__la2.openFile(file);

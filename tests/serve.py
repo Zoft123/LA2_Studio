@@ -5,7 +5,7 @@ the app's dev mode reads (?dev=http://localhost:8800/data). Used for automated b
     python3 tests/serve.py GAME_FOLDER [--port 8800]
     then open http://localhost:8800/?dev=http://localhost:8800/data
 """
-import argparse, json, os, posixpath, urllib.parse
+import argparse, json, os, posixpath, re, urllib.parse
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,6 +39,24 @@ def main():
                 body = json.dumps({'name': name, 'files': files}).encode()
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            rng = self.headers.get('Range', '')
+            m = re.match(r'bytes=(\d+)-(\d*)$', rng)
+            full = self.translate_path(self.path)
+            if m and os.path.isfile(full):
+                # range requests: packed game data (SLOT.DAT, .psarc, ...) is read in parts
+                size = os.path.getsize(full)
+                start = int(m.group(1)); end = min(int(m.group(2)) if m.group(2) else size - 1, size - 1)
+                if start >= size:
+                    self.send_response(416); self.send_header('Content-Range', 'bytes */%d' % size); self.end_headers(); return
+                with open(full, 'rb') as f:
+                    f.seek(start); body = f.read(end - start + 1)
+                self.send_response(206)
+                self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('Content-Range', 'bytes %d-%d/%d' % (start, end, size))
                 self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)

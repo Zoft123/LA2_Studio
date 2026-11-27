@@ -1,5 +1,6 @@
 // Libla Studio: browser UI.
 import { FileListFS, HandleFS, HttpFS, Library, dirname, basename, ext } from './library.js';
+import { PackFS } from './packfs.js';
 import { LA2, OBJ_TYPES, PACKETS, SECTION_NAMES, OBJ_DEF_NAMES, statusFields, patch } from '../formats/la2.js';
 import { isLa3, openLa3 } from '../formats/la3.js';
 import { Model } from '../formats/model.js';
@@ -80,11 +81,14 @@ async function openFS(fs) {
   S.edits.clear(); S.texEdits.clear(); updateSaveButtons();
   busy(1, 'reading folder…');
   try {
-    const lib = new Library(fs, settings);
-    const n = await lib.scan(k => { $('#busy').textContent = `reading folder… ${k} files`; });
+    // packed game data (STAGE.DAT, SLOT.DAT, _zar, STAGEDAT.PDT, .psarc) shows up as folders of its files
+    const lib = new Library(new PackFS(fs), settings);
+    const n = await lib.scan((k, label) => { $('#busy').textContent = label || `reading folder… ${k} files`; });
     S.lib = lib; S.dir = null; S.files = []; closeFile();
     await restoreSession(fs.name);
-    $('#info').textContent = `${fs.name} · ${n} files`;
+    const packs = lib.fs.packs.size;
+    $('#info').textContent = `${fs.name} · ${n} files` + (packs ? ` (${packs} packed file${packs > 1 ? 's' : ''} read in place)` : '');
+    if (lib.fs.failed.length) msg('Could not read ' + lib.fs.failed.map(f => basename(f.path) + ' (' + f.error + ')').join(', '), true);
     S.expanded = new Set([fs.name]);
     drawTree();
     // open the first folder with LA2 data
@@ -544,8 +548,16 @@ $('#saveDar').onclick = async () => {
     let out = writeDar(files, dar.le, data.subarray(dar.end));
     const key = lib.encrypted.get(darPath);
     if (key) out = encrypt(out, key);
+    const packed = lib.fs.container?.(darPath);
+    const rebuilt = packed && lib.fs.rebuild(packed.path, { [packed.rel]: out });
+    if (rebuilt) {             // Portable Ops: the stage's _zar, rebuilt around the edited .dar
+      download(new Blob([rebuilt]), basename(packed.path));
+      msg(`saved ${basename(packed.path)} (${basename(dirname(packed.path))}: rebuilt with the edited ${basename(darPath)})`);
+      return;
+    }
     download(new Blob([out]), basename(darPath));
-    msg(`saved ${basename(darPath)}${key ? ' (re-encrypted, ' + key + ')' : ''}`);
+    msg(`saved ${basename(darPath)}${key ? ' (re-encrypted, ' + key + ')' : ''}` +
+      (packed ? ` — it comes from ${basename(packed.path)} (${packed.label}), which is not rewritten` : ''));
   } finally { busy(-1); }
 };
 $('#saveTex').onclick = async () => {

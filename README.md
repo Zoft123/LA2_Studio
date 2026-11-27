@@ -17,8 +17,11 @@ textures.
 
 **Metal Gear Solid: Peace Walker** uses libla's successor, **LA3**. The PS3 HD port's `.la3` layouts open from its
 `disc0_rel` folder (loose, or inside the stages' `.dar` archives) with their `.txp` textures (loose, or inside the
-stages' `.qar` archives, which Libla Studio reads directly): view, play and export, no editing yet. `SLOT.DAT` has to be
-unpacked first.
+stages' `.qar` archives, which Libla Studio reads directly): view, play and export, no editing yet.
+
+**No unpacking needed:** the games' packed data is read in place. Open the folder that holds it and each container
+shows up as a folder of its files: MGS3 / MGO1 `STAGE*.DAT` and `SLOT*.DAT`, Portable Ops `stage/<name>/_zar` and
+`slot.dat`, Peace Walker HD `STAGEDAT.PDT` and `SLOT.DAT` (with its `SLOT.KEY`), and MGS3 HD's `mgs3.psarc`.
 
 **[Open Libla Studio →](https://zoft123.github.io/Libla_Studio/)**
 
@@ -132,9 +135,9 @@ animations, or when you need every pixel exact.
 | Metal Gear Online 2 | PS3 | inside `stage/*/*.dar` | stage archives are encrypted; decrypted automatically |
 | Metal Gear Arcade | PC | `stage/*/Dar/*.la2`, `*.dar` | little-endian archives |
 | Metal Gear Solid 3 / Metal Gear Online (Subsistence) | PS2 | loose `stage/<name>/<hash>.la2` | view and playback only; textures from the folder's `<hash>.tri` files |
-| Metal Gear Solid 3 HD | PS3 | `mgs3/<lang>/stage/<name>/cache/*.la2`, `mgs3/<lang>/slot/…` | view and playback only; HD textures from `mgs3/stage/<name>/cache/_ps3/*.ctxr` — open the whole `mgs3` folder (extracted from `mgs3.psarc`) so both trees are included |
-| Metal Gear Solid: Portable Ops | PSP | `USRDIR/stage/<name>/` once its `.zar` is unpacked: `.dar` archives (`.la2` inside) or their extracted files | LA2 version 8 (little-endian), view, play, edit and export; textures from `.txp` files inside the stage's `.qar` or extracted beside it (`cache.qar_extracted`) |
-| Metal Gear Solid: Peace Walker HD | PS3 | `disc0_rel/stage/<name>/*.dar` (`.la3` inside), loose `.la3`, unpacked `SLOT.DAT` slots | LA3 versions 4, 5 and 7, view and playback only; textures from `.txp` files, loose or inside the stage's `.qar` archives |
+| Metal Gear Solid 3 HD | PS3 | `mgs3.psarc` as shipped, or the extracted `mgs3` folder: `<lang>/stage/<name>/cache/*.la2`, `<lang>/slot/…` | view and playback only; HD textures from `stage/<name>/cache/_ps3/*.ctxr` — open the folder with `mgs3.psarc` (or the whole extracted `mgs3` folder) so both trees are included |
+| Metal Gear Solid: Portable Ops | PSP | `USRDIR/stage/<name>/_zar` and `USRDIR/slot.dat` as shipped, or unpacked: `.dar` archives (`.la2` inside) or their extracted files | LA2 version 8 (little-endian), view, play, edit and export; textures from `.txp` files inside the stage's `.qar`, in the slots, or extracted beside it (`cache.qar_extracted`). **Save .dar** on a layout read from a `_zar` saves the whole `_zar`, rebuilt |
+| Metal Gear Solid: Peace Walker HD | PS3 | `disc0_rel/STAGEDAT.PDT` and `SLOT.DAT` + `SLOT.KEY` as shipped, or unpacked: `stage/<name>/*.dar` (`.la3` inside), loose `.la3`, `SLOT.DAT` slots | LA3 versions 4, 5 and 7, view and playback only; textures from `.txp` files, loose or inside the stage's `.qar` archives |
 
 Open the folder that holds the files — a single stage, a `slotdat` folder, `USRDIR/o`, or a whole game tree.
 Libla Studio lists the folders that contain layouts; pick one to see its files.
@@ -195,6 +198,22 @@ to an even size. Cropping changes framing only; it does not move objects or chan
 
 ## How files are found
 
+- **Packed game data** is read in place, in parts (a 700 MB `SLOT.DAT` is never loaded whole), and each container
+  becomes a folder of its files, named like the usual extracted folders:
+
+  | Game | File | Shows as |
+  |---|---|---|
+  | MGS3 / MGO1 (PS2) | `STAGE.DAT`, `STAGE_2.DAT`, `STAGE_N.DAT` | `STAGE_2.DAT/<stage>/<hash>.la2`, `<hash>.tri`, … |
+  | MGS3 / MGO1 (PS2) | `SLOT.DAT`, `SLOT_N.DAT` | `SLOT.DAT/slot_NNN/<hash>.la2`, … |
+  | Portable Ops (PSP) | `stage/<name>/_zar` | `_zar/cache.dar`, `_zar/cache.qar`, … |
+  | Portable Ops (PSP) | `slot.dat` | `slot.dat/slot_NNN/<hash>.la2`, `<hash>.txp`, … |
+  | Peace Walker HD | `STAGEDAT.PDT` | `STAGEDAT.PDT/<stage>/cache.dar`, `cache0.qar`, … |
+  | Peace Walker HD | `SLOT.DAT` + `SLOT.KEY` | `SLOT.DAT/<index>_<hash>/<hash>.la3`, `<hash>.txp`, … |
+  | MGS3 HD | `mgs3.psarc` | `mgs3.psarc/us/stage/<name>/cache/…`, `mgs3.psarc/stage/<name>/cache/_ps3/…` |
+
+  Files that only have a name hash on disc are named by it, as unpackers name them. Peace Walker's stage names are
+  not stored either: each stage is found by its `data.cnf` and named from it. Layouts read this way are saved as
+  loose files (**Save .la2** / **Save .dar**), except Portable Ops `_zar` stages, which **Save .dar** rebuilds.
 - **Textures** come from the selected folder's archives first, then the folders above it up to its stage folder.
   Extracted `Dar` layouts also find sibling `Qar` TXNs and their parent folder's DLZs. MGO2's
   `o/stage/<name>` and `o/dl/p/stage/<name>` folders are paired automatically. If something is still missing,
@@ -236,14 +255,16 @@ A browser with **WebGL 2** is required (all current desktop browsers).
 - Action keys can be edited per track; creating new actions and tracks is not available yet.
 - Very long tracks (MGS4 has tracks with thousands of keys) show the first 400 keys in the key editor.
 - Names of objects and actions are 24-bit hashes; the original names are not stored in the files.
-- PS2 (MGS3 / MGO1) layouts and TRI textures can be viewed, played and exported, not edited yet. Layouts packed in
-  `SLOT.DAT` / `STAGE.DAT` are not read; open extracted stage folders.
+- PS2 (MGS3 / MGO1) layouts and TRI textures can be viewed, played and exported, not edited yet. Disc images
+  (`.iso`) are not read; copy the `MGS` folder (`STAGE*.DAT`, `SLOT*.DAT`) off the disc.
+- Packed game data is read, not written back: edited layouts from `STAGE*.DAT`, `SLOT.DAT`, `STAGEDAT.PDT` or
+  `.psarc` are saved as loose files (only Portable Ops `_zar` stages are rebuilt).
 - Peace Walker LA3 layouts can be viewed, played and exported, not edited. Versions 4, 5 and 7 are read.
   Blend modes, angle direction and morph behavior were checked against the decrypted PSP executable.
   Type-5 keys start actions on their named objects; type-4 keys are shown as numbered game callbacks, whose
   game-specific effects are not simulated. Control-vertex bindings and stencil masks are identified but are not
   rendered yet. See [the runtime findings](docs/LA3_RUNTIME.md) for evidence and remaining limits.
-  `SLOT.DAT` is not read; unpack it first. Model / effect TXPs whose pixels are held
+  Model / effect TXPs whose pixels are held
   elsewhere (TXP flag 2) are not decoded; layouts do not use them.
 
 ## Roadmap

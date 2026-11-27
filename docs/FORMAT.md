@@ -283,7 +283,8 @@ static analysis of the decrypted PSP EBOOT. Names below are descriptive names, n
 See [LA3 runtime evidence and remaining limits](LA3_RUNTIME.md).
 
 Where: `disc0_rel/stage/<name>/` (`cache.dar` / `resident.dar` hold the `.la3` files, `cache<N>.qar` /
-`resident<N>.qar` the `.txp` textures) and `SLOT.DAT` (needs unpacking; each slot holds loose `.la3` and `.txp`).
+`resident<N>.qar` the `.txp` textures) and `SLOT.DAT` (each slot holds loose `.la3` and `.txp`). As shipped, the
+stage folders are packed in `STAGEDAT.PDT` (see [Packed game data](#packed-game-data)), which Libla Studio reads in place.
 
 **Header** (16 bytes): `"FEL"` + version byte (4, 5 or 7; all three are read), `u32 0`,
 `u16`, `u16 0x0404`, `u32 300` (ticks per second).
@@ -350,7 +351,8 @@ their own distance from the edges (no quarter-texel inset).
 ### Portable Ops (PSP): LA2 version 8 and its TXPs
 
 *Metal Gear Solid: Portable Ops* layouts are ordinary little-endian LA2 version `0x10008` files (the same header as
-Metal Gear Arcade's), inside each stage's `.zar` (`cache.dar`; textures in `cache.qar`). Two things differ from MGA:
+Metal Gear Arcade's), inside each stage's `_zar` (`cache.dar`; textures in `cache.qar`) and in `slot.dat` (loose
+`.la2` and `.txp`; see [Packed game data](#packed-game-data)). Two things differ from MGA:
 
 - the texture table pairs are (texture hash, TXP hash), and the TXP hash is StrCode24 of the TXP's file name (its
   QAR id); a texture is looked up by both, like the PS2 TRI textures;
@@ -378,3 +380,49 @@ All 526 distinct Portable Ops TXPs (7,461 images) use these formats.
 order. (Tools that pack the files back to back instead cut every file but the first wrongly.) **Portable Ops QAR**
 is the same with the files at 0x80 boundaries. **PW DAR** is the
 MGS4 DAR layout, little-endian. StrCode24: `x = ((x << 5 | x >> 19) + c) & 0xFFFFFF` over the name's bytes.
+
+## Packed game data
+
+How each game packs its stages and slots, as Libla Studio reads them in place (`js/formats/packs.js`). Every cipher
+here XORs little-endian 32-bit words with a key stream `key = key * 0x02E90EDD + step`. Files stored by id are
+`type << 24 | StrCode24(name)`.
+
+**MGS3 / MGO1 (PS2) `STAGE*.DAT`** (MGS3_N.ELF `sub_1012F0` / `sub_1013B8` / `sub_101810` / `sub_100D80`): `u32 w0`,
+then encrypted with key `w0`, step `w0 ^ 0xF0F0`: 12 header bytes (`s16` stage count at +4) and count ×
+`{char name[16], u32 sector}` (sectors of 0x800). Each stage starts with a TOC encrypted with
+`key = StrCode(name) * 129 + w0 + 0xA78925D9`, `step = StrCode(name) * 129 + 0x7A88FB59`: `u32 n`, n × `{u32 a, u32 b}`,
+padded to 0x800. `7F0000xx` opens a section of size b, `7E` + 24-bit compressed size gives its offset b after the
+TOC, other entries are files at offset b in the section, `7F000000` closes it. A section is a zlib stream encrypted
+with `k = first u16 ^ 0x9385`: key `(k ^ 0x6576) << 16 | k`, step `k * 0x116`; after decryption the first u16 gets
+`+ 0x8F3` (giving the `78 9C` zlib header). Section `7F000010` is the stage's sound bank, streamed raw.
+
+**Plain slots: MGS3 / MGO1 `SLOT*.DAT`, Portable Ops `slot.dat`:** `{u32 stamp, u16 1, u16 sector multiple,
+u16 slot count, …}`, the rest of the first sector unused; then each slot in sequence: a stage-style TOC (not
+encrypted) and its uncompressed sections, each padded to the sector. Slots have no names. Portable Ops slots hold
+TXP textures (type `0x14`) and its own types (Peace Walker's table below).
+
+**Portable Ops `stage/<name>/_zar`:** `u32 size`, then a zlib stream of a DAR holding the stage's files
+(`data.cnf`, `cache.dar`, `cache.qar`, `scenerio.gcx`, …).
+
+**Peace Walker HD `STAGEDAT.PDT`** (as in [Chrysalis](https://github.com/Jayveer/Chrysalis)): `{u32 saltA, saltB,
+saltC}`, then encrypted with `v = saltA ^ saltB`, key `v | (v ^ 0x6576) << 16`, step `v * saltC`: 20 header bytes
+(`u16` entry count at +12), count × `{u32 size, u32, u32 offset}` and count × `{i32 key, u32 index, u32 lt, u32 gt}`,
+a binary search tree (child = value / 16; `lt` when the node's key is less than the wanted one, signed). An entry is
+encrypted with the same key from its start: `u32 size` + zlib. A stage's file is found by
+`key = ~((s >> 4 ^ s << 4) ^ 0x10EA) ^ id` with `s = StrCode24(stage)`; stage names are not stored, but every stage
+has a `data.cnf` listing its files (lines starting with `.` are flags, `@` marks a QAR, `?` an AFP), so the stages
+are the entries whose key is a `data.cnf` key for some `s` (the relation inverts), named by the file in their config
+whose StrCode24 is `s` (`<stage>.rlc`).
+
+**Peace Walker HD `SLOT.DAT` + `SLOT.KEY`:** `SLOT.KEY` holds the salts and 20-byte records `{u32 A, u32 B,
+u32 hash, u32, u32}`: a slot covers sectors `A & 0xFFFFF` to `B & 0xFFFFF` (0x1000 bytes) of `SLOT.DAT`, encrypted
+from its start like a `STAGEDAT.PDT` entry: `{u32 0x00100004, 0, u32 compressed size, u32 size}` + zlib. Inside:
+`{u32 count, 0}` and 16-byte records `{u32 id, 0, u32 offset, 0}` up to `7F000000`; file data from 0x1000.
+Peace Walker file types (EBOOT table at 0x11AD228): `0x14` txp, `0x5E` la3, `0x5F` la2, `0xF0` dar, `0xF1` qar,
+`0xF2` cnf, `0x02` gcx, `0x03` tri, …
+
+**MGS3 HD `.psarc`:** big-endian `{'PSAR', u16 1, u16 4, 'zlib', u32 TOC length, u32 30, u32 files, u32 block size,
+u32 flags}`; entries `{md5[16], u32 first block, u40 size, u40 offset}`, then a compressed size per block (`u16`
+for 64 KiB blocks; 0 = a full raw block, a size equal to the block's plain size = stored raw). Entry 0 is the
+manifest, the other entries' paths one per line.
+
