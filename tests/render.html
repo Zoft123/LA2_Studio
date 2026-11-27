@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>LA2 Studio renderer checks</title>
+<title>Libla Studio renderer checks</title>
 <pre id="results">Running WebGL2 checks…</pre>
 <script type="module">
 import { Renderer } from '../js/engine/gl.js';
@@ -43,9 +43,9 @@ try {
     lines.push(`PASS crop at zoom ${scale}: ${pixels.w} × ${pixels.h}, blue tile only`);
   }
   results.textContent = lines.join('\n');
-  document.title = 'PASS — LA2 Studio renderer checks';
+  document.title = 'PASS — Libla Studio renderer checks';
 } catch (error) {
   results.textContent = `FAIL ${error.stack || error}`;
-  document.title = 'FAIL — LA2 Studio renderer checks';
+  document.title = 'FAIL — Libla Studio renderer checks';
 }
 </script>

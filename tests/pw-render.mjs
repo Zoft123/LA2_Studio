@@ -1,4 +1,4 @@
-// Offline check of Peace Walker (PS3 HD) LA3 + TXP support: software-renders .la3 files with LA2 Studio's own
+// Offline check of Peace Walker (PS3 HD) LA3 + TXP support: software-renders .la3 files with Libla Studio's own
 // parser, texture pool and playback engine (no browser), writing PNG contact sheets.
 //
 //   node tests/pw-render.mjs <out folder> <folder> [<folder> ...] [--limit N] [--no-png]

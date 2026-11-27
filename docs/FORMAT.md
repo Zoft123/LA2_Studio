@@ -1,7 +1,7 @@
 # LA2 format reference
 
 LA2 is the 2D layout and animation format of *libla*, the interface library of the MGS4 engine (Metal Gear Solid 4,
-Metal Gear Online 2, Metal Gear Arcade). This document describes the format as LA2 Studio reads and writes it, then
+Metal Gear Online 2, Metal Gear Arcade). This document describes the format as Libla Studio reads and writes it, then
 the PS2 version (MGS3 / MGO1, and MGS3's PS3 HD port) and Peace Walker's LA3.
 Structure names follow the engine's own naming where it is known.
 
@@ -62,7 +62,7 @@ usTriangleStripCount, usStringCount, usTypingCount) and usPad.
 Retail libla (MGO2, Metal Gear Arcade 2011 and 2015) dispatches on the **low 4 bits** of the type word; an MGS4 PS3
 debug build checks the whole low byte and rejects anything above 11. MGS4's Flash-converted layouts mark shapes with
 extra bits there (for example `0x3016`: a Quad with bits 0x10, 0x1000, 0x2000). Those are Flash mask / guide shapes:
-drawn, they cover the scene with flat shapes, so LA2 Studio hides them unless asked to show them (how retail MGS4
+drawn, they cover the scene with flat shapes, so Libla Studio hides them unless asked to show them (how retail MGS4
 skips them is not traced). In MGA's libla, 0x1000 / 0x2000 / 0x4000 make the object's draw packet rebuild every
 update.
 
@@ -196,7 +196,7 @@ Any other command hash is passed to the game as a signal.
 8. Runtime text fields: text the game writes while it runs (MGS3 item descriptions and dialogs, MGO1 / MGO2 player
    names, ...) is reserved as a string of only `@` (and line breaks) in a font whose `@` cell is a square taken from
    the top-left of its texture, a sheet of box frames. `@` never appears in real text in these fonts, and the game
-   never shows the boxes: LA2 Studio leaves them out unless Settings → Draw runtime text fields is ticked
+   never shows the boxes: Libla Studio leaves them out unless Settings → Draw runtime text fields is ticked
    (819 such strings in MGS3 / MGO1 layouts, 445 in MGO2's r_sna01_n).
 
 ## Tables
@@ -226,7 +226,7 @@ Any other command hash is passed to the game as a signal.
 
 MGO2's stage archives are encrypted with a key derived from their folder below `USRDIR/o`, written
 `stage/<name>` (for both `o/stage/<name>` and `o/dl/p/stage/<name>`): a 64-bit XOR chain over the data followed by a
-16-byte MD5-based checksum. LA2 Studio decrypts such files when reading and re-encrypts archives it writes.
+16-byte MD5-based checksum. Libla Studio decrypts such files when reading and re-encrypts archives it writes.
 
 ## PS2: Metal Gear Solid 3 / Metal Gear Online (version 0x10007)
 
@@ -356,7 +356,7 @@ Metal Gear Arcade's), inside each stage's `.zar` (`cache.dar`; textures in `cach
   QAR id); a texture is looked up by both, like the PS2 TRI textures;
 - UVs and glyph UVs are 0…65535 of the texture's region (as on PS2), not texels; no quarter-texel inset.
 
-The header cannot tell Portable Ops from MGA, so LA2 Studio decides from the textures: a version-8 LE layout whose
+The header cannot tell Portable Ops from MGA, so Libla Studio decides from the textures: a version-8 LE layout whose
 texture table resolves to (texture, TXP) keys of the folder's TXPs is read as Portable Ops.
 
 **Portable Ops TXP** (little-endian; no hash of its own):

@@ -1,5 +1,5 @@
 {
-  "name": "la2-studio",
+  "name": "libla-studio",
   "version": "1.0.0",
   "description": "Browser-based viewer, player and editor for MGS4-engine LA2 2D layout files (Metal Gear Solid 4, Metal Gear Online 2, Metal Gear Arcade), MGS3 / Metal Gear Online on PS2 and MGS3 HD, and Peace Walker HD's LA3 (view and playback).",
   "private": true,

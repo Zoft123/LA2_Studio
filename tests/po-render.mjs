@@ -1,5 +1,5 @@
 // Offline check of Metal Gear Solid: Portable Ops (PSP) LA2 + TXP support: software-renders the layouts of each
-// stage with LA2 Studio's own parser, texture pool and playback engine (no browser), writing PNG contact sheets.
+// stage with Libla Studio's own parser, texture pool and playback engine (no browser), writing PNG contact sheets.
 //
 //   node tests/po-render.mjs <out folder> <stage folder> [<stage folder> ...] [--limit N] [--no-png]
 //

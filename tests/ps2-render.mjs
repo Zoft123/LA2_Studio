@@ -1,4 +1,4 @@
-// Offline check of PS2 (MGS3 / MGO1) LA2 + TRI support: software-renders LA2 files with LA2 Studio's own parser,
+// Offline check of PS2 (MGS3 / MGO1) LA2 + TRI support: software-renders LA2 files with Libla Studio's own parser,
 // texture pool and playback engine (no browser), writing PNG contact sheets.
 //
 //   node tests/ps2-render.mjs <out folder> <stage folder> [<stage folder> ...]

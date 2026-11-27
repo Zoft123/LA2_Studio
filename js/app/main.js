@@ -1,4 +1,4 @@
-// LA2 Studio: browser UI.
+// Libla Studio: browser UI.
 import { FileListFS, HandleFS, HttpFS, Library, dirname, basename, ext } from './library.js';
 import { LA2, OBJ_TYPES, PACKETS, SECTION_NAMES, OBJ_DEF_NAMES, statusFields, patch } from '../formats/la2.js';
 import { isLa3, openLa3 } from '../formats/la3.js';

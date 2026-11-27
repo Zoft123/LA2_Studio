@@ -1,10 +1,12 @@
-# LA2 Studio
+# Libla Studio
 
-**View, play, edit and export LA2 layouts — the animated 2D interface files of the MGS4 engine, and now of Metal Gear Solid 3 / Metal Gear Online on PS2, the PS3 HD port of MGS3, Portable Ops on PSP and Peace Walker HD's LA3 — right in your browser.**
+**View, play, edit and export libla layouts (LA2 and LA3) — the animated 2D interface files of the MGS4 engine, and also of Metal Gear Solid 3 / Metal Gear Online on PS2, the PS3 HD port of MGS3, Portable Ops on PSP and Peace Walker HD — right in your browser.**
+
+*Formerly LA2 Studio.* The old address, `zoft123.github.io/LA2_Studio/`, redirects here; saved settings and kept edits carry over.
 
 LA2 is the layout and animation format of *libla*, the 2D library of the engine behind **Metal Gear Solid 4**,
 **Metal Gear Online 2** and **Metal Gear Arcade**. Every HUD, menu, icon, loading screen and telop in those games is
-an LA2 file: a tree of sprites, shapes and text with keyframed actions. LA2 Studio renders them the way the game
+an LA2 file: a tree of sprites, shapes and text with keyframed actions. Libla Studio renders them the way the game
 does, plays their animations, lets you edit them structurally, swaps their textures, and exports animations as
 WebP or APNG.
 
@@ -15,10 +17,10 @@ textures.
 
 **Metal Gear Solid: Peace Walker** uses libla's successor, **LA3**. The PS3 HD port's `.la3` layouts open from its
 `disc0_rel` folder (loose, or inside the stages' `.dar` archives) with their `.txp` textures (loose, or inside the
-stages' `.qar` archives, which LA2 Studio reads directly): view, play and export, no editing yet. `SLOT.DAT` has to be
+stages' `.qar` archives, which Libla Studio reads directly): view, play and export, no editing yet. `SLOT.DAT` has to be
 unpacked first.
 
-**[Open LA2 Studio →](https://zoft123.github.io/LA2_Studio/)**
+**[Open Libla Studio →](https://zoft123.github.io/Libla_Studio/)**
 
 Everything runs locally in your browser. You pick a folder of game files you own; nothing is uploaded, and no game
 data is included in this repository.
@@ -135,12 +137,12 @@ animations, or when you need every pixel exact.
 | Metal Gear Solid: Peace Walker HD | PS3 | `disc0_rel/stage/<name>/*.dar` (`.la3` inside), loose `.la3`, unpacked `SLOT.DAT` slots | LA3 versions 4, 5 and 7, view and playback only; textures from `.txp` files, loose or inside the stage's `.qar` archives |
 
 Open the folder that holds the files — a single stage, a `slotdat` folder, `USRDIR/o`, or a whole game tree.
-LA2 Studio lists the folders that contain layouts; pick one to see its files.
+Libla Studio lists the folders that contain layouts; pick one to see its files.
 
 ## Getting started
 
 ### Use it online
-Open **https://zoft123.github.io/LA2_Studio/** in a current Chrome, Edge, Firefox or Safari, then:
+Open **https://zoft123.github.io/Libla_Studio/** in a current Chrome, Edge, Firefox or Safari, then:
 
 1. **Open folder…** (or **Upload folder** in browsers without folder access) and choose your game files.
 2. Pick a folder in the tree, then a file in the list.
@@ -150,15 +152,15 @@ Open **https://zoft123.github.io/LA2_Studio/** in a current Chrome, Edge, Firefo
 The app is a static site with no build step. Serve the repository folder with any static web server, for example:
 
 ```sh
-git clone https://github.com/Zoft123/LA2_Studio.git
-cd LA2_Studio
+git clone https://github.com/Zoft123/Libla_Studio.git
+cd Libla_Studio
 python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
 (Opening `index.html` directly from disk does not work: browsers do not load JavaScript modules from `file://`.)
 
-## Using LA2 Studio
+## Using Libla Studio
 
 | Area | What it does |
 |---|---|
@@ -323,7 +325,7 @@ The file format is described in [docs/FORMAT.md](docs/FORMAT.md).
 
 ## Legal
 
-LA2 Studio is an unofficial fan-made tool. It is not affiliated with, endorsed by or connected to Konami or
+Libla Studio is an unofficial fan-made tool. It is not affiliated with, endorsed by or connected to Konami or
 Kojima Productions. *Metal Gear*, *Metal Gear Solid*, *Metal Gear Online* and *Metal Gear Arcade* are trademarks of
 their respective owners. This repository contains no game files or game assets; you need your own copies of the
 games' files to use it.

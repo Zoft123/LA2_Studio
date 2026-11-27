@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Development server: serves LA2 Studio from the repository root and a game folder under /data, with a JSON listing
+"""Development server: serves Libla Studio from the repository root and a game folder under /data, with a JSON listing
 the app's dev mode reads (?dev=http://localhost:8800/data). Used for automated browser tests.
 
     python3 tests/serve.py GAME_FOLDER [--port 8800]
@@ -49,7 +49,7 @@ def main():
             self.send_header('Cache-Control', 'no-store')
             super().end_headers()
 
-    print('LA2 Studio dev server: http://localhost:%d/?dev=http://localhost:%d/data' % (a.port, a.port), flush=True)
+    print('Libla Studio dev server: http://localhost:%d/?dev=http://localhost:%d/data' % (a.port, a.port), flush=True)
     ThreadingHTTPServer(('127.0.0.1', a.port), H).serve_forever()
 
 

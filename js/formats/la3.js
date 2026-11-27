@@ -1,7 +1,7 @@
 // LA3: the 2D layout / animation format of Metal Gear Solid: Peace Walker (PSP engine; here the PS3 HD port, whose
 // files stay little-endian and are byte-swapped by the game on load: EBOOT sub_C00B5C). Libla's successor: the same
 // object types and ideas as LA2, packed tighter. Read here and converted into an LA2 (v0x10008, little-endian) in
-// memory, so the rest of LA2 Studio (scene, playback, inspector) works on it unchanged; LA3 files are view-only.
+// memory, so the rest of Libla Studio (scene, playback, inspector) works on it unchanged; LA3 files are view-only.
 //
 // header   "FEL" + version byte (4, 5 or 7), u32 0, u16, u16 0x0404,
 //          u32 300 (ticks per second, as libla's clock)
