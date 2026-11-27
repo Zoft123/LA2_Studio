@@ -131,7 +131,7 @@ animations, or when you need every pixel exact.
 | Metal Gear Arcade | PC | `stage/*/Dar/*.la2`, `*.dar` | little-endian archives |
 | Metal Gear Solid 3 / Metal Gear Online (Subsistence) | PS2 | loose `stage/<name>/<hash>.la2` | view and playback only; textures from the folder's `<hash>.tri` files |
 | Metal Gear Solid 3 HD | PS3 | `mgs3/<lang>/stage/<name>/cache/*.la2`, `mgs3/<lang>/slot/…` | view and playback only; HD textures from `mgs3/stage/<name>/cache/_ps3/*.ctxr` — open the whole `mgs3` folder (extracted from `mgs3.psarc`) so both trees are included |
-| Metal Gear Solid: Peace Walker HD | PS3 | `disc0_rel/stage/<name>/*.dar` (`.la3` inside), loose `.la3`, unpacked `SLOT.DAT` slots | LA3, view and playback only (version 7 files; 5 and 4 are skipped); textures from `.txp` files, loose or inside the stage's `.qar` archives |
+| Metal Gear Solid: Peace Walker HD | PS3 | `disc0_rel/stage/<name>/*.dar` (`.la3` inside), loose `.la3`, unpacked `SLOT.DAT` slots | LA3 versions 4, 5 and 7, view and playback only; textures from `.txp` files, loose or inside the stage's `.qar` archives |
 
 Open the folder that holds the files — a single stage, a `slotdat` folder, `USRDIR/o`, or a whole game tree.
 LA2 Studio lists the folders that contain layouts; pick one to see its files.
@@ -235,9 +235,12 @@ A browser with **WebGL 2** is required (all current desktop browsers).
 - Names of objects and actions are 24-bit hashes; the original names are not stored in the files.
 - PS2 (MGS3 / MGO1) layouts and TRI textures can be viewed, played and exported, not edited yet. Layouts packed in
   `SLOT.DAT` / `STAGE.DAT` are not read; open extracted stage folders.
-- Peace Walker LA3 layouts can be viewed, played and exported, not edited. Only version 7 files are read (about 93%;
-  versions 5 and 4 are skipped). The signals its actions send the game (key type 4) are listed as unnamed commands,
-  and blend modes are inferred. `SLOT.DAT` is not read; unpack it first. Model / effect TXPs whose pixels are held
+- Peace Walker LA3 layouts can be viewed, played and exported, not edited. Versions 4, 5 and 7 are read.
+  Blend modes, angle direction and morph behavior were checked against the decrypted PSP executable.
+  Type-5 keys start actions on their named objects; type-4 keys are shown as numbered game callbacks, whose
+  game-specific effects are not simulated. Control-vertex bindings and stencil masks are identified but are not
+  rendered yet. See [the runtime findings](docs/LA3_RUNTIME.md) for evidence and remaining limits.
+  `SLOT.DAT` is not read; unpack it first. Model / effect TXPs whose pixels are held
   elsewhere (TXP flag 2) are not decoded; layouts do not use them.
 
 ## Roadmap

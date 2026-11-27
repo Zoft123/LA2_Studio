@@ -7,7 +7,9 @@
 //          log2(buffer size) << 12 | size. Format (low 3 bits) 4: 4-bit indices, 5: 8-bit indices (PSP swizzled,
 //          RGBA8888 palette with full 0..255 alpha), 6: DDS at the texture's palette / data offset.
 // texture  40 bytes {u32 flags, u32 hash, u32 image record offset, u32 palette (or DDS) offset, f32 u, f32 v,
-//          f32 width, f32 height (fractions of the image buffer), u16 width, u16 height (texels), u32 ?}
+//          f32 width, f32 height (fractions of the power-of-two buffer from the image's high nibbles),
+//          u16 width, u16 height (layout texels), u32 ?}
+// The DDS can be padded beyond that buffer (often to 128 rows); its stored dimensions do not rescale the rectangle.
 // A texture is a rectangle of an image; layouts name it by (texture hash, TXP hash).
 import { Reader } from '../core/bin.js';
 import { decodeDxt } from './textures.js';

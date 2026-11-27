@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-for (const name of ['regressions.mjs', 'pw.mjs', 'crop.mjs', 'crop-app.mjs']) {
+for (const name of ['regressions.mjs', 'pw.mjs', 'la3-runtime.mjs', 'crop.mjs', 'crop-app.mjs']) {
   const checks = fileURLToPath(new URL('./' + name, import.meta.url));
   const result = spawnSync(process.execPath, [checks], { stdio: 'inherit' });
   if (result.status !== 0) process.exit(result.status ?? 1);

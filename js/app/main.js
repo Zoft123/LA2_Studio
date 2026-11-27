@@ -11,7 +11,7 @@ import { CropControls } from './crop.js';
 import { layoutPoint } from '../engine/viewport.js';
 import { playbackMode, exportSchedule } from '../engine/playback.js';
 import { WebPWriter, APNGWriter, VideoWriter, VIDEO_FORMATS, videoFormats, encodePNG, webpSupported } from '../engine/export.js';
-import { hex, toHex, fromHex, latin1, Reader } from '../core/bin.js';
+import { hex, toHex, fromHex, latin1, Reader, strcode } from '../core/bin.js';
 import { replaceTexture } from './texedit.js';
 import { zipSync } from '../vendor/fflate.js';
 import * as session from './session.js';
@@ -1098,7 +1098,11 @@ function keyDesc(k) {
     const r = new Reader(k.data, S.la.le), n = k.data.length >= 4 ? r.u32(0) : 0, out = [];
     for (let i = 0; i < n && 8 + 8 * i <= k.data.length; i++) {
       const c = r.u32(4 + 8 * i), arg = r.u32(8 + 8 * i), t = S.la.named.get(arg);
-      out.push(`${COMMANDS.get(c) || 'signal #' + hex(c)}(${t !== undefined ? 'action ' + t : '#' + hex(arg)})`);
+      if (k.la3Signal) out.push(`Game callback #${hex(c)}(#${hex(arg)})`);
+      else if (S.la.la3 && c === strcode('LA3StartAction')) {
+        const key = S.la.la3.keys[arg];
+        out.push(key ? `Start action #${hex(key.action)} on object #${hex(key.object)}` : 'Start action');
+      } else out.push(`${COMMANDS.get(c) || 'signal #' + hex(c)}(${t !== undefined ? 'action ' + t : '#' + hex(arg)})`);
     }
     return out.join(', ');
   }
@@ -1123,7 +1127,7 @@ function tabKeys(P) {
       const shown = la.keys(a, ti, 400).map(k => {
         const data = la.data.subarray(k.offset + 4, k.offset + Math.max(4, k.size));
         const tgt = k.type === 7 ? k.value : k.type === 8 ? k.status : null, at = tgt !== null ? la.blockAt(tgt) : null;
-        return { type: k.type, data, pos: at ? at[0] : null, delta: at ? at[1] : 0 };
+        return { type: k.type, data, pos: at ? at[0] : null, delta: at ? at[1] : 0, la3Signal: la.la3Signals?.has(k.offset) };
       });
       return `<div class="section" data-track="${ti}"><b>Track ${ti}: object id ${tr.object}</b> <span class="dim">${o ? o.type_name + ' #' + hex(o.hash) : ''} · ${tr.nkeys} keys</span>
         <table>${shown.map(keyRow).join('')}</table>${tr.nkeys > shown.length ? `<div class="dim small">… ${tr.nkeys - shown.length} more keys (too many to edit here)</div>` : `<button data-addkey="${ti}">+ key</button> <button data-savekeys="${ti}">Save track</button>`}</div>`;
@@ -1168,7 +1172,7 @@ function tabFileLa3(P) {
   const row = (a, b, c = '') => `<tr><td class="k">${a}</td><td>${b}</td><td class="dim">${c}</td></tr>`;
   const names = { 0x20: 'objects', 0x21: 'object records', 0x40: 'action records', 0x41: 'key lists', 0x50: 'keys',
     0x51: 'key data', 0x80: 'textures', 0x81: 'texture hashes', 0x90: 'point lists', 0x91: 'points', 0xA0: 'colour lists',
-    0xA1: 'colours', 0xB0: '?', 0xB1: '?', 0xC0: 'texts', 0xC1: 'text bytes', 0xD0: 'fonts', 0xD1: 'glyphs' };
+    0xA1: 'colours', 0xB0: 'control-vertex lists', 0xB1: 'control-vertex indices', 0xC0: 'texts', 0xC1: 'text bytes', 0xD0: 'fonts', 0xD1: 'glyphs' };
   P.innerHTML = `<div class="section"><b>${esc(S.file.id)}</b><div class="dim small">Peace Walker LA3 ("FEL" version ${L.version}) · little-endian (PS3 HD port) · ${la.source.length} bytes · ${L.ticksPerSecond} ticks per second · view only</div></div>
     <div class="section"><h3>Sections</h3><table>${[...L.sections].filter(([t]) => t).map(([t, s]) => row('0x' + t.toString(16).toUpperCase().padStart(2, '0'), names[t] || '', s.size + ' bytes at 0x' + (s.offset - 4).toString(16))).join('')}</table></div>
     <div class="section"><h3>Fonts</h3><table>${la.fonts.map((f, i) => row('font ' + (i + 1), '#' + hex(f.hash), f.glyphs.size + ' glyphs')).join('') || row('none', '')}</table></div>

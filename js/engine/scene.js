@@ -12,6 +12,7 @@ import { strcode, latin1 } from '../core/bin.js';
 
 export const COMMANDS = new Map(['StartAction', 'StartLoopAction', 'StopAction', 'FrontLayer', 'BackLayer',
   'SwapLayer', 'OffLayer', 'Name'].map(n => [strcode(n), n]));
+const LA3_START_ACTION = strcode('LA3StartAction');
 
 const lerp = (a, b, t) => a + (b - a) * t;
 // libla's morphs (MorphFuncVertex / Size / RGBA / Scale / Rotate): (1 − rate)·from + rate·to in single precision,
@@ -21,6 +22,11 @@ const mix = (a, b, t) => {
   const v = f32(f32(f32(1 - t) * a) + f32(f32(t) * b));
   return v < 0 ? Math.ceil(v - 0.5) : Math.floor(v + 0.5);
 };
+// LA3's normal point/scalar/colour handlers (E27C8 / E3250 / E33FC; PS3 1F7198 for points) round
+// in the direction of change. The optional instance-flag 0x800 snapshot mode uses a different point handler.
+const la3ScalarMix = (a, b, t) => a === b ? a : Math.trunc(f32(f32(a + f32(f32(b - a) * f32(t))) + (b < a ? -0.5 : 0.5))) || 0;
+const signed16 = v => (v << 16) >> 16;
+const la3UV = (la, i) => (la.uv_tbl[i] || []).map(p => p.map(signed16));
 // SetPacketSprt / RSprt / String move each UV a quarter texel (4 of libla's 1/16-texel units) toward the centre of
 // the UV rectangle, so filtering never reaches the neighbouring atlas texels (or, at an edge, the other side)
 const UV_INSET = 0.25;
@@ -64,6 +70,7 @@ export class State {
     this.rgba = new Map();          // (target << 12 | i) -> [r, g, b, a] (RGB 0..255, alpha 0x80 = opaque)
     this.texture = 0;
     this.uv = null;
+    this.uvPoints = null;            // LA3's UV list can morph independently of its source table entry
     this.blend = 'normal';
     this.scale = 256;
     this.rotate = 0;
@@ -77,6 +84,7 @@ export class State {
     const s = Object.assign(new State(), this);
     s.xy = this.xy.map(l => l.map(p => p.slice()));
     s.wh = this.wh.map(p => p.slice());
+    s.uvPoints = this.uvPoints && this.uvPoints.map(p => p.slice());
     s.rgba = new Map([...this.rgba].map(([k, v]) => [k, v.slice()]));
     s.layout = this.layout.slice();
     s.typing = this.typing.slice();
@@ -84,8 +92,11 @@ export class State {
   }
   /** Apply packets; t < 1 = part of a morph: positions, sizes, colours, scale and rotation interpolate, every other
    *  change (show / hide, blend, texture, UV, text…) waits for the end (MGO2's MorphFunc handlers; the morph loop
-   *  applies every packet of the block whatever each handler returns). at = global frame (typing start). */
+   *  applies every packet of the block whatever each handler returns). LA3 also morphs UVs and String spacing.
+   *  at = global frame (typing start). */
   apply(packets, la, t = 1, at = 0) {
+    const pointMix = la.la3 ? la3ScalarMix : mix;
+    const scalarMix = la.la3 ? la3ScalarMix : mix;
     for (const p of packets) {
       const n = p.name;
       if (n === 'show') { if (t >= 1) this.visible = true; }
@@ -93,29 +104,47 @@ export class State {
       else if (n === 'xy') {
         let nw = p.lists.map(l => l.points.map(q => q.slice()));
         if (t < 1 && nw.length === this.xy.length)
-          nw = nw.map((nl, i) => nl.length === this.xy[i].length ? nl.map((q, k) => [mix(this.xy[i][k][0], q[0], t), mix(this.xy[i][k][1], q[1], t)]) : nl);
+          nw = nw.map((nl, i) => nl.length === this.xy[i].length ? nl.map((q, k) => [pointMix(this.xy[i][k][0], q[0], t), pointMix(this.xy[i][k][1], q[1], t)]) : nl);
         this.xy = nw;
       } else if (n === 'xy_add') {
         const add = (v, d) => t < 1 ? mix(v, v + d, t) : v + d;
         this.xy = this.xy.map((o, i) => p.lists[i] ? o.map((q, k) => p.lists[i].points[k] ? [add(q[0], p.lists[i].points[k][0]), add(q[1], p.lists[i].points[k][1])] : q) : o);
       } else if (n === 'wh') {
         let nw = p.values.map(v => v.slice());
-        if (t < 1 && nw.length === this.wh.length) nw = nw.map((v, i) => [mix(this.wh[i][0], v[0], t), mix(this.wh[i][1], v[1], t)]);
+        if (t < 1 && nw.length === this.wh.length) nw = nw.map((v, i) => [pointMix(this.wh[i][0], v[0], t), pointMix(this.wh[i][1], v[1], t)]);
         this.wh = nw;
       } else if (n === 'rgba') {
         for (const c of p.colors) {
           const lst = la.color_tbl[c.color] || [];
           lst.forEach((nc, i) => {
             const key = (c.target << 12) | i, old = this.rgba.get(key) || WHITE, out = old.slice();
-            [8, 4, 2, 1].forEach((bit, ch) => { if (c.mask & bit) out[ch] = t < 1 ? mix(old[ch], nc[ch], t) : nc[ch]; });
+            [8, 4, 2, 1].forEach((bit, ch) => { if (c.mask & bit) out[ch] = t < 1 ? scalarMix(old[ch], nc[ch], t) : nc[ch]; });
             this.rgba.set(key, out);
           });
         }
       } else if (n === 'texture') { if (t >= 1) this.texture = p.value; }
-      else if (n === 'uv') { if (t >= 1) this.uv = p.value; }
+      else if (n === 'uv') {
+        if (la.la3) {
+          const target = la3UV(la, p.value), old = this.uvPoints || la3UV(la, this.uv);
+          this.uvPoints = t < 1 && old.length === target.length
+            ? target.map((q, i) => q.map((v, k) => pointMix(old[i][k], v, t))) : target;
+        }
+        if (t >= 1) this.uv = p.value;
+      }
       else if (n === 'blend') { if (t >= 1) this.blend = p.blend || 'normal'; }
-      else if (n === 'scale') { const v = p.value & 0xFFFF; this.scale = t < 1 ? mix(this.scale, v, t) : v; }
-      else if (n === 'rotate') { const v = p.values[0]; this.rotate = t < 1 ? mix(this.rotate, v, t) : v; }
+      else if (n === 'scale') { const v = la.la3 ? signed16(p.value) : p.value & 0xFFFF; this.scale = t < 1 ? scalarMix(this.scale, v, t) : v; }
+      else if (n === 'rotate') {
+        // LA3 stores a signed 16-bit full-turn angle and negates it for drawing (CF050). E30A8 morphs
+        // over the shortest arc, truncating in those original units before wrapping back to i16.
+        const v = la.la3 ? -p.values[0] / 16 : p.values[0];
+        if (la.la3 && t < 1) {
+          let delta = v - this.rotate;
+          if (delta > 2048) delta -= 4096;
+          else if (delta < -2048) delta += 4096;
+          this.rotate = signed16(Math.trunc(f32(this.rotate * 16 + f32(f32(delta * 16) * f32(t))))) / 16;
+        } else this.rotate = t < 1 ? mix(this.rotate, v, t) : v;
+      }
+      else if (n === 'string_space' && la.la3) this.layout[0] = t < 1 ? pointMix(this.layout[0], p.value, t) : p.value;
       else if (t >= 1) {
         if (n === 'text') this.text = p.text;
         else if (n === 'text_layout') this.layout = p.values.slice();
@@ -170,7 +199,11 @@ function rawKeys(la, action, track, depth, acc) {
       }
       if (type === KEY_CMD) {
         const n = r.u32(q + 4), cmds = [];
-        for (let i = 0; i < n; i++) cmds.push([r.u32(q + 8 + 8 * i), r.u32(q + 12 + 8 * i)]);
+        for (let i = 0; i < n; i++) {
+          const command = [r.u32(q + 8 + 8 * i), r.u32(q + 12 + 8 * i)];
+          if (la.la3Signals?.has(q)) command.push(true);
+          cmds.push(command);
+        }
         acc.cmds.set(acc.type.length, cmds);
       }
       acc.type.push(type); acc.dur.push(dur); acc.block.push(block); acc.delta.push(delta);
@@ -220,14 +253,19 @@ export class Timeline {
   loops(i) { return !!this.la.actions[i].flags; }
   /** Updates are `step` ticks apart: an action ends (or loops) in the first update that reaches its length. */
   period(i) { return Math.max(1, Math.ceil(this.len[i] / this.step)) * this.step; }
-  _commands(i) {
+  runLength(run) {
+    return run.trackIndices ? Math.max(0, ...run.trackIndices.map(t => trackLength(this.tracks(run.action)[t]))) : this.len[run.action];
+  }
+  runPeriod(run) { return Math.max(1, Math.ceil(this.runLength(run) / this.step)) * this.step; }
+  _commands(i, run) {
     const out = [];
     this.tracks(i).forEach((tk, t) => {
+      if (run?.trackIndices && !run.trackIndices.includes(t)) return;
       if (!tk.cmds.size) return;
       let time = 0;
       for (let k = 0; k < tk.n; k++) {
         if (tk.type[k] === KEY_END || tk.type[k] === KEY_RET) break;
-        if (tk.cmds.has(k)) for (const [c, arg] of tk.cmds.get(k)) out.push([time, c, arg, this.la.actions[i].tracks[t].object]);
+        if (tk.cmds.has(k)) for (const [c, arg, signal] of tk.cmds.get(k)) out.push([time, c, arg, run?.targetObject ?? this.la.actions[i].tracks[t].object, signal]);
         time += tk.dur[k];
       }
     });
@@ -246,13 +284,13 @@ export class Timeline {
     this.events = []; this.layerOps = [];
     const heap = [];
     const addRun = run => {
-      const cmds = this._commands(run.action), P = this.period(run.action);
+      const cmds = this._commands(run.action, run), P = this.runPeriod(run);
       const reps = run.loop ? Math.floor(this.horizon / P) + 1 : 1;
       for (let r = 0; r < reps; r++) {
-        for (const [t, c, arg, obj] of cmds) {
+        for (const [t, c, arg, obj, signal] of cmds) {
           const g = run.start + r * P + Math.max(1, Math.ceil(t / K)) * K;
           if (g > this.horizon) break;
-          heap.push([g, this.runs.indexOf(run), heap.length, run, c, arg, obj]);
+          heap.push([g, this.runs.indexOf(run), heap.length, run, c, arg, obj, signal]);
         }
         if (run.start + r * P > this.horizon) break;
       }
@@ -261,18 +299,38 @@ export class Timeline {
     // still in libla's list during update g, as seen by the run at index `by` (earlier runs have moved already)
     const listed = (r, g, by) => {
       if (r.start >= g) return false;
-      const end = r.stop ?? (r.loop ? Infinity : r.start + this.period(r.action));
+      const end = r.stop ?? (r.loop ? Infinity : r.start + this.runPeriod(r));
       return g < end || (g === end && r.stop === null && this.runs.indexOf(r) > by);
     };
     for (const run of [...this.runs]) addRun(run);
     while (heap.length) {
-      const [g, by, , run, c, arg, obj] = heap.shift();
+      const [g, by, , run, c, arg, obj, signal] = heap.shift();
       if (run.stop !== null && g > run.stop) continue;
-      const name = c === LAYER_ON ? '#f286b2 (layer on)' : COMMANDS.get(c) || '#' + c.toString(16).padStart(6, '0');
+      const name = signal ? 'Game callback #' + c.toString(16).padStart(6, '0')
+        : this.la.la3 && c === LA3_START_ACTION ? 'Start LA3 action'
+        : c === LAYER_ON ? '#f286b2 (layer on)' : COMMANDS.get(c) || '#' + c.toString(16).padStart(6, '0');
       const target = this.la.named.get(arg);
       const event = { frame: g, name, arg, action: run.action };
       this.events.push(event);
-      if ((name === 'StartAction' || name === 'StartLoopAction') && target !== undefined) {
+      if (signal) { event.signal = true; continue; }     // LA3 key4 calls game code (DFC10), not LA2 commands
+      if (name === 'Start LA3 action') {
+        // E1DC8 key5: look up an object by key+8, then start key+4's action on that object. A high
+        // action byte selects one track; zero selects every track with the same low 24-bit hash.
+        const key = this.la.la3.keys[arg], object = key && this.la.la3.objects.find(o => o.hash === key.object);
+        const action = key && this.la.named.get(key.action & 0xFFFFFF);
+        const source = action === undefined ? [] : this.la.la3Tracks?.[action] || [];
+        const trackIndices = source.flatMap((t, i) => !(key.action >>> 24) || t.hash === key.action ? [i] : []);
+        if (!object || action === undefined || !trackIndices.length) { event.ignored = true; continue; }
+        const targetObject = object.id + 1;
+        event.actionHash = key.action; event.objectHash = key.object;
+        const duplicate = this.runs.some(r => r.action === action && listed(r, g, by) && trackIndices.some(t =>
+          (!r.trackIndices || r.trackIndices.includes(t))
+          && (r.targetObject ?? this.la.actions[action].tracks[t].object) === targetObject));
+        if (duplicate) { event.ignored = true; continue; }
+        const nr = { action, targetObject, trackIndices, start: g - K, stop: null, loop: false };
+        this.runs.push(nr);
+        addRun(nr);
+      } else if ((name === 'StartAction' || name === 'StartLoopAction') && target !== undefined) {
         if (this.runs.some(r => r.action === target && listed(r, g, by))) { event.ignored = true; continue; }
         const nr = { action: target, start: g - K, stop: null, loop: name === 'StartLoopAction' || this.loops(target) };
         this.runs.push(nr);
@@ -289,7 +347,7 @@ export class Timeline {
   /** Ticks to show: the first action, or until the last non-looping action it starts has ended. */
   length() {
     let end = this.len[this.root] * (this.mode === 'pingpong' ? 2 : 1);
-    for (const r of this.runs.slice(1)) if (!r.loop) end = Math.max(end, Math.min(r.stop ?? 1e9, r.start + this.len[r.action]));
+    for (const r of this.runs.slice(1)) if (!r.loop) end = Math.max(end, Math.min(r.stop ?? 1e9, r.start + this.runLength(r)));
     return Math.min(end, this.horizon);
   }
   /** Ping-pong plays the first action forward then backward: the tick actually shown. */
@@ -383,12 +441,12 @@ export class Scene {
     for (const c of this.cursors) {
       const r = c.run;
       if (r.start > f) continue;
-      const tl = this.timeline, n = tl.len[r.action], tracks = tl.tracks(r.action);
+      const tl = this.timeline, n = tl.runLength(r), tracks = tl.tracks(r.action);
       let local = (r.stop !== null ? Math.min(f, r.stop) : f) - r.start;
       // looping: once every track has finished, the update that got there restarts the keys at tick 0 from the
       // state the pass left, so a pass lasts `period` ticks and its last update shows the end state
       if (r.loop && n > 0) {
-        const P = tl.period(r.action), pass = local > 0 ? Math.floor((local - 1) / P) : 0;
+        const P = tl.runPeriod(r), pass = local > 0 ? Math.floor((local - 1) / P) : 0;
         while (c.loops < pass) {
           this._runTracks(c, tracks, n, r.start + c.loops * P, true);
           c.loops++;
@@ -396,16 +454,17 @@ export class Scene {
         }
         local -= pass * P;
       }
-      this._runTracks(c, tracks, local, r.start + c.loops * (r.loop ? tl.period(r.action) : n), false);
+      this._runTracks(c, tracks, local, r.start + c.loops * (r.loop ? tl.runPeriod(r) : n), false);
     }
     this.at = f;
   }
   _runTracks(c, tracks, local, base, finish) {
     const la = this.la;
     tracks.forEach((tk, ti) => {
+      if (c.run.trackIndices && !c.run.trackIndices.includes(ti)) return;
       const cur = c.tracks[ti];
       if (cur.done) return;
-      const oid = la.actions[c.run.action].tracks[ti].object, st = this.state.get(oid);
+      const oid = c.run.targetObject ?? la.actions[c.run.action].tracks[ti].object, st = this.state.get(oid);
       while (cur.k < tk.n) {
         const type = tk.type[cur.k], dur = tk.dur[cur.k], block = tk.block[cur.k], delta = tk.delta[cur.k];
         if (type === KEY_SET) {
@@ -546,7 +605,7 @@ export class Scene {
     const info = this.tx && this.tx.lookup(key);
     if (!info) return null;
     const ps2 = this.la.ps2;
-    let pts = st.uv === null || st.uv >= this.la.uv_tbl.length ? null : this.la.uv_tbl[st.uv];
+    let pts = st.uvPoints || (st.uv === null || st.uv >= this.la.uv_tbl.length ? null : this.la.uv_tbl[st.uv]);
     if (!pts && ps2) pts = [[0, 0], [65535, 65535]];      // PS2: no UV entry = the whole texture region
     if (!pts) return { tex: key, uv: null };
     // PS2 (v7): 0..65535 of the texture region, whose TRI rectangle is already texel-centred (no inset).

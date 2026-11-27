@@ -80,7 +80,7 @@ for (const root of roots) for (const f of layouts(root)) {
   const bytes = f.bytes();
   if (!isLa3(bytes)) continue;
   total++;
-  if (bytes[3] !== 7) { skipped++; continue; }
+  if (![4, 5, 7].includes(bytes[3])) { skipped++; continue; }
   try {
     const la = openLa3(bytes);
     const tx = textures(f.dir);
@@ -122,6 +122,6 @@ for (const root of roots) for (const f of layouts(root)) {
     rendered++;
   } catch (e) { failed++; console.log('FAIL', path.join(f.dir, f.name), e.stack.split('\n').slice(0, 3).join(' | ')); }
 }
-console.log(`${rendered}/${total} layouts rendered (${skipped} older LA3 versions skipped, ${failed} failed), ` +
+console.log(`${rendered}/${total} layouts rendered (${skipped} unsupported LA3 versions skipped, ${failed} failed), ` +
   `${texRefs - missingTex}/${texRefs} texture references resolved in their folder or the one above`);
 if (missing.size) console.log('missing TXPs:', [...missing].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([t, n]) => `${t} x${n}`).join(', '));

@@ -278,16 +278,18 @@ named with 8 hex digits (`00fdea15.tri`). Differences:
 little-endian and are byte-swapped by the game on load, EBOOT `sub_C00B5C`) uses **LA3**, libla's successor: the same
 object types and the same ideas (status, set / morph / wait keys, 300 ticks per second), packed into chunks. LA2
 Studio reads LA3 and converts it into an LA2 in memory, so it is viewed and played by the same engine; LA3 files are
-view-only. Everything below was read from the files and the EBOOT's byte-order routines; the names are ours, and
-the runtime player has not been found, so a few meanings (marked) are inferred from the data.
+view-only. The container was read from files and the PS3 EBOOT's byte-order routines; playback was checked by
+static analysis of the decrypted PSP EBOOT. Names below are descriptive names, not recovered symbols.
+See [LA3 runtime evidence and remaining limits](LA3_RUNTIME.md).
 
 Where: `disc0_rel/stage/<name>/` (`cache.dar` / `resident.dar` hold the `.la3` files, `cache<N>.qar` /
 `resident<N>.qar` the `.txp` textures) and `SLOT.DAT` (needs unpacking; each slot holds loose `.la3` and `.txp`).
 
-**Header** (16 bytes): `"FEL"` + version byte (7 in 5527 of 5938 files; 5 and 4 in the rest, not read yet), `u32 0`,
+**Header** (16 bytes): `"FEL"` + version byte (4, 5 or 7; all three are read), `u32 0`,
 `u16`, `u16 0x0404`, `u32 300` (ticks per second).
 
-**Chunks** follow: `{u8 type, u24 size}` + `size` bytes, until type 0. Each section starts with `{u16 count, u16 x}`.
+**Chunks** follow: `{u8 type, u24 size}` + `size` bytes, until type 0. Index sections start with
+`{u16 count, u16 x}`; their paired data sections have the contents shown below, without a universal header.
 
 | Type | Contents |
 |---|---|
@@ -296,39 +298,53 @@ Where: `disc0_rel/stage/<name>/` (`cache.dar` / `resident.dar` hold the `.la3` f
 | 0x40 | action records, 16 bytes: `{u32 hash, u32 object name hash, u32 length (ticks), u16 key count, u16 first}` into 0x41. Each record animates one object; records whose hashes share the low 24 bits (the high byte numbers them 1, 2, …) form one action |
 | 0x41 | `u16` key numbers (into 0x50) |
 | 0x50 | `count` × `u32` offset into 0x51 |
-| 0x51 | key `{u16 type, u16 size, …}`: 0 end · 1 set `{u32 mask, values}` · 2 morph `{u32 ticks, u32 mask, values}` · 3 wait `{u32 ticks}` · 4 signals for the game, `u32` pairs `(command, argument)` (e.g. 7 / 0 = show / hide caption *n*) · 5 `{u32, u32}` (one file) |
-| 0x80 | textures: `{u16 count, u16 hash count}`, then `count` × `{u8 texture-hash index, u8 TXP-hash index}` (`u16`s when there are 256 or more hashes) |
+| 0x51 | key `{u16 type, u16 size, …}`: 0 end · 1 set `{u32 mask, values}` · 2 morph `{u32 ticks, u32 mask, values}` · 3 wait `{u32 ticks}` · 4 game callbacks, `u32` pairs `(command, argument)` · 5 start action `{u32 action hash, u32 target object hash}` |
+| 0x80 | textures: `{u16 count, u16 hash count}`, then `count` × `{u8 texture-hash index, u8 TXP-hash index}` (`u16`s from version 6 onward when there are 256 or more hashes; versions 4/5 keep byte indices) |
 | 0x81 | the hashes, `u32`, sorted |
-| 0x90 | point lists: `count` × `{u8 points, u8 ?, u16 first}` into 0x91 |
+| 0x90 | point lists into 0x91: versions 4/5 use `count` × `{u16 points, u16 first}`; version 7 uses `{u8 points, u8 first-high, u16 first-low}`, with a 24-bit first-point index |
 | 0x91 | points `{i16 x, i16 y}`: positions and sizes in 1/16 px, UVs in 1/16 texel |
 | 0xA0 / 0xA1 | colour lists `{u16 colours, u16 first}` into `{u8 r, g, b, a}` (alpha 0x80 = opaque, as LA2) |
 | 0xC0 / 0xC1 | texts `{u16 length, u16 offset}` into the text bytes |
 | 0xD0 / 0xD1 | fonts `{u32 hash, u16 glyphs, u16 first}` into glyphs `{u32 code, u16 size list, u16 UV list}`: the size list holds the cell (w, h in 1/16 px), the UV list its two corners |
-| 0xB0 / 0xB1 | unknown (400 files) |
+| 0xB0 / 0xB1 | control-vertex lists `{u16 count, u16 first}` into byte indices; these bind vertices to a Ctrl ancestor's point list |
 
 **Mask bits** (object state and set / morph keys): 2 visible · 4 position list · 5 colour list · 6 size list
-(Box, Sprt, String) · 7 UV list · 9 ? (0…6) · 10 String spacing list · 11 text · 16 rotation (65536 = full turn) ·
-17 scale (256 = 1.0) · 18 blend, inferred (1 on glow sprites: additive; 2: subtractive) · 19 texture · 20 / 28 RSprt
-flags (?) · 22 font · 23 alignment (0 left, 1 right, 2 centre); 12, 13, 24…27 Typing only.
+(Box, Sprt, String) · 7 UV list · 9 control-vertex list · 10 String spacing list · 11 text · 16 rotation
+(65536 units per turn, negated for drawing) · 17 signed scale (256 = 1.0) · 18 blend (0 normal, 1 additive,
+2 destination minus source, other values disable blending) · 19 texture · 20 stencil write mask · 28 stencil
+test mask · 22 font · 23 alignment (0 left, 1 right, 2 centre); 12, 13, 24…27 Typing only.
+
+Normal point properties (position, size, UV and spacing), scale and colour interpolate with rounding by the
+direction of change. The game can select an alternate snapshot-based point handler with an instance flag;
+that mode is not specified by the file and is not emulated. Rotation interpolates over the shortest 16-bit arc. Discrete
+properties such as visibility, blend mode and texture change only at the end of a morph. Type-4 messages call
+the application's callback; their numbers do not name universal LA3 commands. Type 5 selects all tracks sharing
+an action's low 24-bit hash, or one exact track when the hash has a nonzero high byte, and starts them on its
+specified object without looping. Studio does not yet reproduce control-vertex bindings or stencil clipping.
 
 Layout coordinates are PSP-screen sized (480 × 272); many layouts start hidden and are shown by their actions.
 Text made only of `@` reserves room for text the game writes at run time (hidden unless placeholders are shown).
 
-**UVs** (sprites and glyphs) are in 1/16 texel of the texture's own size (its `w` × `h` in the TXP). The HD port
-redrew many textures larger (a 32 × 32 texture can be a 32 × 128 DDS), so they are scaled onto the image; the
-layouts keep their own distance from the edges (no quarter-texel inset).
+**UVs** (sprites and glyphs) are in 1/16 texel of the texture's own layout size (`w` × `h` in the TXP), mapped
+through its rectangle into the image's power-of-two buffer. In decoded-image pixels,
+`U = (texture.u + (layoutU / 16 / texture.w) * texture.uw) * image.bw`, and similarly for V. The DDS's stored
+dimensions can include padding: a 32 × 32 buffer can live in a 32 × 128 DDS, while UVs still address 32 rows.
+The PS3 texture binder (`sub_2D6F8` → `sub_C51020` → `sub_C2018C`) passes the buffer exponents; shader setup
+`sub_C20F60` scales the texture transform by buffer dimensions divided by actual GPU dimensions. Layouts keep
+their own distance from the edges (no quarter-texel inset).
 
 **TXP** (little-endian):
 
 - header `{u32 flags, u32 own hash, u32 image count, u32 texture count, u32 ?, u32 image table (0x20), u32 texture
   table, u32 data start}`. Flags 0: paletted pixels inside the file; 1: DDS inside the file (the HD port's
-  redrawn textures; every UI texture the layouts use); 2: pixels held elsewhere (model / effect textures; not decoded).
+  UI textures); 2: pixels held elsewhere (model / effect textures; not decoded).
 - image, 20 bytes: `{u16 format, u16 width, u16 height, u16 0, u32 0, u32 pixel offset, u32 0}`; width and height
   are `log2(buffer size) << 12 | size`. Format (low 3 bits) 4: 4-bit indices, 5: 8-bit indices, both PSP-swizzled
   (16-byte × 8-row blocks) with an RGBA8888 palette (full 0…255 alpha); 6: a DDS (DXT1 / DXT5) at the texture's
   palette offset.
 - texture, 40 bytes: `{u32 flags, u32 hash, u32 image record offset, u32 palette (or DDS) offset, f32 u, f32 v,
-  f32 width, f32 height (fractions of the image buffer), u16 width, u16 height (texels), u32 ?}`. Layouts name a
+  f32 width, f32 height (fractions of the power-of-two image buffer, excluding DDS padding), u16 width,
+  u16 height (layout texels), u32 ?}`. Layouts name a
   texture by (texture hash, TXP hash).
 
 **PW QAR** (`*.qar`, little-endian): the files at 0x1000 boundaries, then (at the offset in the last `u32`)

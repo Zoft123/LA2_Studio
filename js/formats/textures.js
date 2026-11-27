@@ -169,9 +169,9 @@ export class TexturePool {
     return info;
   }
 
-  /** Peace Walker TXP: its textures under txpTexKey(texture, TXP). A texture is a rectangle of an image (an
-   *  indexed PSP image or a DDS): u0, v0, uw, vh in image texels; lw, lh its size in the layouts' UV units
-   *  (1/16 of these texels), which an HD image may draw at a larger size. Images decode on first use. */
+  /** Peace Walker TXP: its textures under txpTexKey(texture, TXP). Texture rectangles use the TXP image's
+   *  power-of-two buffer dimensions. A PS3 DDS can contain extra padding; that padding does not scale the UVs
+   *  (PS3 EBOOT 2D6F8 -> C51020 -> C2018C -> C20F60). Images decode on first use. */
   addTxp(bytes) {
     const txp = parseTxp(bytes);
     if (!txp) return false;
@@ -180,7 +180,8 @@ export class TexturePool {
       if (this.infos.has(key)) continue;
       const size = txpImageSize(bytes, t);
       const W = size ? size.w : 1, H = size ? size.h : 1;
-      const u0 = t.u * W, v0 = t.v * H, uw = t.uw * W, vh = t.vh * H;
+      const BW = t.image ? t.image.bw : W, BH = t.image ? t.image.bh : H;
+      const u0 = t.u * BW, v0 = t.v * BH, uw = t.uw * BW, vh = t.vh * BH;
       this.infos.set(key, {
         index: this.infos.size, tex: t.hash, tri: txp.hash, txp: { bytes, tex: t, available: !!size },
         // the same pixels with another palette decode differently
