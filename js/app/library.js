@@ -7,6 +7,7 @@ import { TexturePool, decodeDxt, parseTxn, RGBA } from '../formats/textures.js';
 import { parseTri, triTexKey } from '../formats/tri.js';
 import { ctxrDirs, ctxrHash } from '../formats/ctxr.js';
 import { parseTxp, txpTexKey } from '../formats/txp.js';
+import { strcode } from '../core/bin.js';
 
 const dirname = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
 const basename = p => p.slice(p.lastIndexOf('/') + 1);
@@ -75,6 +76,8 @@ function triHash(p) {
   const hash = parseInt(name, 16);
   return hash <= MAX_HASH ? hash : null;
 }
+/** Name hash of a loose TXP (StrCode24 of its file name): the hash of a Portable Ops TXP, which stores none. */
+const txpNameHash = p => strcode(basename(p).replace(/\.[^.]*$/, ''));
 const isTexSource = p => ['.qar', '.txn', '.tri', '.txp'].includes(ext(p));
 const isLayout = p => ['.la2', '.la3'].includes(ext(p));
 const BUDGET_POOLS = 512 << 20, BUDGET_IMAGES = 384 << 20;
@@ -222,8 +225,10 @@ export class Library {
    *  plus the paired o/stage/<name> <-> o/dl/p/stage/<name> folder. */
   textureDirs(dir) {
     const has = d => (this.dirs.get(d)?.files || []).some(isTexSource);
-    // a folder and its extracted Qar/ subfolder (the TXNs of an extracted archive, beside its Dar/)
-    const sources = d => [d, ...[...(this.dirs.get(d)?.subdirs || [])].filter(s => basename(s).toLowerCase() === 'qar')].filter(has);
+    // a folder and its extracted QAR subfolder (Qar/ beside Dar/; Portable Ops: cache.qar_extracted beside
+    // cache.dar_extracted)
+    const isQarDir = s => /^qar$|\.qar_extracted$/i.test(basename(s));
+    const sources = d => [d, ...[...(this.dirs.get(d)?.subdirs || [])].filter(isQarDir)].filter(has);
     const found = sources(dir);
     let d = dir;
     for (let k = 0; k < 4 && d.includes('/'); k++) {
@@ -260,8 +265,8 @@ export class Library {
           }
           continue;
         }
-        if (ext(p) === '.txp') {        // Peace Walker: every loose TXP of a folder shares one pool, "dir|@txp"
-          const txp = parseTxp(await this.fs.read(p));
+        if (ext(p) === '.txp') {        // Peace Walker / Portable Ops: every loose TXP of a folder shares one pool, "dir|@txp"
+          const txp = parseTxp(await this.fs.read(p), txpNameHash(p));
           if (txp) for (const t of txp.textures) this._index(index, txpTexKey(t.hash, txp.hash), dirname(p) + '|@txp');
           continue;
         }
@@ -269,7 +274,7 @@ export class Library {
         const pw = ext(p) === '.qar' ? readPwQar(data) : null;
         if (pw) {                       // Peace Walker QAR: its TXPs, "dir|<qar name>"
           for (const e of pw) {
-            const txp = ext(e.name) === '.txp' ? parseTxp(e.data) : null;
+            const txp = ext(e.name) === '.txp' ? parseTxp(e.data, e.id & 0xFFFFFF) : null;
             if (txp) for (const t of txp.textures) this._index(index, txpTexKey(t.hash, txp.hash), dirname(p) + '|' + basename(p).slice(0, -4));
           }
           continue;
@@ -335,8 +340,8 @@ export class Library {
     }
     if (base === '@txp' || (qar && readPwQar(await this.read(qar)))) {
       // Peace Walker: loose TXPs, or the TXPs inside a PW QAR
-      if (base === '@txp') for (const p of files.filter(p => ext(p) === '.txp')) try { pool.addTxp(await this.fs.read(p)); } catch (x) { /* not a TXP */ }
-      else for (const e of readPwQar(await this.read(qar))) if (ext(e.name) === '.txp') try { pool.addTxp(e.data); } catch (x) { /* not a TXP */ }
+      if (base === '@txp') for (const p of files.filter(p => ext(p) === '.txp')) try { pool.addTxp(await this.fs.read(p), txpNameHash(p)); } catch (x) { /* not a TXP */ }
+      else for (const e of readPwQar(await this.read(qar))) if (ext(e.name) === '.txp') try { pool.addTxp(e.data, e.id & 0xFFFFFF); } catch (x) { /* not a TXP */ }
       this.pools.set(loc, pool);
       return pool;
     }
@@ -369,6 +374,13 @@ export class Library {
     return pool;
   }
   /** Locations of a texture: the folder's own first, then the wide search. */
+  /** Portable Ops (PSP) layout: LE version 8 whose texture table resolves to (texture, TXP) keys of this folder's
+   *  TXPs (the header alone looks like Metal Gear Arcade's). */
+  isPspLayout(la) {
+    if (la.ps2 || la.la3 || !la.le || la.version !== 0x10008 || !la.tex_tbl.length) return false;
+    const found = la.tex_tbl.filter(([h, t]) => this.index?.has(txpTexKey(h, t)) || this.fallback?.has(txpTexKey(h, t))).length;
+    return found > 0 && found * 2 >= la.tex_tbl.length;
+  }
   locations(h) {
     const own = this.index?.get(h) || [];
     // MGS3 PS3 port: a TRI-qualified key with no TRI record nearby may still have its CTXR beside the layout

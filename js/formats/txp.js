@@ -11,8 +11,19 @@
 //          u16 width, u16 height (layout texels), u32 ?}
 // The DDS can be padded beyond that buffer (often to 128 rows); its stored dimensions do not rescale the rectangle.
 // A texture is a rectangle of an image; layouts name it by (texture hash, TXP hash).
+//
+// Metal Gear Solid: Portable Ops (PSP) TXPs differ:
+// header   {u32 0, u32 flags, u32 image count, u32 image table (0x20), u32 texture count, u32 texture table, u32 0,
+//          u32 0}; there is no own hash: the TXP's hash is StrCode24 of its file name (its QAR id).
+// image    16 bytes {u16 width, u16 height (log2(buffer) << 12 | size), u16 format (4: 4-bit, 5: 8-bit indices),
+//          u16 flags (2: zlib-compressed pixels: u32 compressed size, then the zlib stream), u32 pixel offset,
+//          u32 palette offset (RGBA8888, 0..255 alpha)}. Pixels are PSP-swizzled with the visible width as the stride
+//          (width x height, not the power-of-two buffer).
+// texture  48 bytes {u32 flags, u32 hash, u32 0, u16 width, u16 height (layout texels), u32 0, u32 image record
+//          offset, u32 0, f32 u, f32 v, f32 width, f32 height (fractions of the buffer, texel-centred), u32 0}.
 import { Reader } from '../core/bin.js';
 import { decodeDxt } from './textures.js';
+import { unzlibSync } from '../vendor/fflate.js';
 
 export const TXP_INLINE = 0, TXP_DDS = 1, TXP_EXTERNAL = 2;
 const FMT_I4 = 4, FMT_I8 = 5, FMT_DDS = 6;
@@ -22,10 +33,39 @@ const FOURCC = { 0x31545844: 9, 0x33545844: 10, 0x35545844: 11 }; // DXT1 / DXT3
 /** Key of a TXP texture in a TexturePool, like the PS2 TRI keys: txp << 24 | texture. */
 export const txpTexKey = (tex, txp) => txp * 0x1000000 + tex;
 
-/** Header, images and textures of a TXP, or null when the bytes are not one. */
-export function parseTxp(bytes) {
+/** Portable Ops layout: image table at 0x20 (u32 at +12), texture table right after its 16-byte records. */
+function isPspTxp(r, length) {
+  const nImg = r.u32(8), nTex = r.u32(16), texOff = r.u32(20);
+  return r.u32(0) === 0 && r.u32(12) === 0x20 && nImg <= 4096 && nTex <= 4096 && texOff === 0x20 + 16 * nImg
+    && texOff + 48 * nTex <= length;
+}
+
+/** Portable Ops TXP (see the header comment); `hash` is the TXP's name hash (StrCode24 of its file name). */
+function parsePspTxp(bytes, r, hash) {
+  const nImg = r.u32(8), nTex = r.u32(16), texOff = r.u32(20);
+  const images = new Map();
+  for (let i = 0; i < nImg; i++) {
+    const o = 0x20 + 16 * i, W = r.u16(o), H = r.u16(o + 2);
+    images.set(o, { offset: o, format: r.u16(o + 4), compressed: !!(r.u16(o + 6) & 2), w: W & 0xFFF, h: H & 0xFFF,
+      bw: 1 << (W >> 12), bh: 1 << (H >> 12), pixels: r.u32(o + 8), palette: r.u32(o + 12), psp: true });
+  }
+  const textures = [];
+  for (let i = 0; i < nTex; i++) {
+    const o = texOff + 48 * i, image = images.get(r.u32(o + 20)) || null;
+    textures.push({
+      index: i, flags: r.u32(o), hash: r.u32(o + 4), image, palette: image ? image.palette : 0,
+      u: r.f32(o + 28), v: r.f32(o + 32), uw: r.f32(o + 36), vh: r.f32(o + 40), w: r.u16(o + 12), h: r.u16(o + 14),
+    });
+  }
+  return { flags: r.u32(4), hash: hash ?? null, images, textures, psp: true };
+}
+
+/** Header, images and textures of a TXP, or null when the bytes are not one. `nameHash`: StrCode24 of the file's
+ *  name, the hash of a Portable Ops TXP (which does not store its own). */
+export function parseTxp(bytes, nameHash = null) {
   if (bytes.length < 32) return null;
   const r = new Reader(bytes, true);
+  if (isPspTxp(r, bytes.length)) return parsePspTxp(bytes, r, nameHash);
   const flags = r.u32(0), hash = r.u32(4), nImg = r.u32(8), nTex = r.u32(12);
   const imgOff = r.u32(20), texOff = r.u32(24);
   if (imgOff !== 0x20 || nImg > 4096 || nTex > 4096 || imgOff + 20 * nImg > bytes.length || texOff + 40 * nTex > bytes.length) return null;
@@ -49,6 +89,7 @@ export function parseTxp(bytes) {
 export function txpImageSize(bytes, tex) {
   const im = tex.image;
   if (!im) return null;
+  if (im.psp) return im.pixels ? { w: im.w, h: im.h } : null;   // Portable Ops: the visible size (see header)
   if ((im.format & 7) === FMT_DDS) {
     const r = new Reader(bytes, true), o = tex.palette;
     if (o + 128 > bytes.length || r.u32(o) !== DDS_MAGIC) return null;
@@ -96,7 +137,13 @@ export function decodeTxpImage(bytes, tex) {
   }
   if (fmt !== FMT_I4 && fmt !== FMT_I8) return null;
   const bpp = fmt === FMT_I4 ? 4 : 8, rowBytes = w * bpp / 8;
-  const raw = unswizzle(bytes.subarray(im.pixels, im.pixels + rowBytes * h), rowBytes, h);
+  let src = bytes.subarray(im.pixels, im.pixels + rowBytes * h);
+  if (im.compressed) {                                        // Portable Ops: u32 size, then a zlib stream
+    const r = new Reader(bytes, true), size = r.u32(im.pixels);
+    try { src = unzlibSync(bytes.subarray(im.pixels + 4, im.pixels + 4 + size)); }
+    catch (e) { return null; }
+  }
+  const raw = unswizzle(src, rowBytes, h);
   const n = fmt === FMT_I4 ? 16 : 256, pal = bytes.subarray(tex.palette, tex.palette + 4 * n);
   if (pal.length < 4 * n) return null;
   const rgba = new Uint8Array(w * h * 4);

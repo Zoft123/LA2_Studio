@@ -73,7 +73,7 @@ const LAYOUT_EXT = ['.la2', '.la3', '.dar'];
 /** Layouts that can be viewed and played but not edited: PS2 LA2 (MGS3 / MGO1) and Peace Walker LA3. */
 const viewOnly = la => la && (la.ps2 || la.la3);
 const formatLabel = la => la.la3 ? 'Peace Walker LA3 v' + la.la3.version + ' (PS3 HD, LE) · view only'
-  : la.ps2 ? (la.hd ? 'MGS3 PS3 HD (LE)' : 'PS2 (LE)') : la.le ? 'PC (LE)' : 'PS3 (BE)';
+  : la.ps2 ? (la.hd ? 'MGS3 PS3 HD (LE)' : 'PS2 (LE)') : la.psp ? 'Portable Ops PSP (LE)' : la.le ? 'PC (LE)' : 'PS3 (BE)';
 
 async function openFS(fs) {
   if (S.edits.size && !confirm('Opening another folder discards unsaved edits. Continue?')) return;
@@ -185,6 +185,7 @@ async function openFile(f, keep = null) {
     const bytes = ed ? ed.bytes : await S.lib.la2Bytes(f);
     if (g !== S.gen) return;
     const la = isLa3(bytes) ? openLa3(bytes) : new LA2(bytes);
+    if (S.lib.isPspLayout(la)) la.usePspTextures();
     $('#busy').textContent = 'loading textures…';
     await S.lib.prepare(la.texKeys, S.texEdits);
     if (g !== S.gen) return;
@@ -1000,7 +1001,7 @@ function tabTextures(P) {
   const rows = la.texKeys.map((h, i) => ({ i: i + 1, h, name: la.tex_tbl[i][0], info: lib.lookup(h) }));
   P.innerHTML = '<div class="texgrid">' + rows.map(r => `<div class="tex" data-h="${r.h}">` +
     (r.info ? `<canvas data-tc="${r.i}"></canvas>` : '<div class="dim small" style="padding:20px 4px">not found in this folder</div>') +
-    `<div class="cap">#${r.i} · ${hex(r.name)}${la.ps2 ? ' · TRI ' + hex(la.tex_tbl[r.i - 1][1]) : la.la3 ? ' · TXP ' + hex(la.tex_tbl[r.i - 1][1]) : ''}${r.info ? ` · ${r.info.w}×${r.info.h}` : ''}</div>` +
+    `<div class="cap">#${r.i} · ${hex(r.name)}${la.ps2 ? ' · TRI ' + hex(la.tex_tbl[r.i - 1][1]) : la.la3 || la.psp ? ' · TXP ' + hex(la.tex_tbl[r.i - 1][1]) : ''}${r.info ? ` · ${r.info.w}×${r.info.h}` : ''}</div>` +
     (r.info ? `<div class="cap" title="${esc(r.info.loc)}">${esc(r.info.loc.split('|').map((s, k) => k ? s : basename(s)).join(' · '))}</div>
       <div class="acts"><a data-dl="${r.i}">PNG</a>${viewOnly(la) ? '' : `<label>replace…<input type="file" accept="image/png,image/*" data-rep="${r.i}" hidden></label>`}</div>` : '') + '</div>').join('') + '</div>' +
     (rows.some(r => !r.info) ? '<div class="pad"><button id="searchAll">Search everything for missing textures</button> <span class="dim small">indexes every archive in the opened folder</span></div>' : '') +
@@ -1023,7 +1024,7 @@ function tabTextures(P) {
       const pts = la.uv_tbl[u];
       if (!pts) continue;
       const off = la.version === 0x10009 ? [0, 0] : [-info.ox, -info.oy];
-      if (la.ps2 || la.la3) {  // PS2: 0..65535 of the texture region; LA3: 1/16 texel of its layout size
+      if (la.ps2 || la.psp || la.la3) {  // PS2 / Portable Ops: 0..65535 of the texture region; LA3: 1/16 texel of its layout size
         const s16 = v => v > 0x7FFF ? v - 0x10000 : v;
         const q = pts.map(([x, y]) => la.la3
           ? [info.u0 - info.ox + s16(x) / la.uvUnit / info.lw * info.uw, info.v0 - info.oy + s16(y) / la.uvUnit / info.lh * info.vh]
@@ -1158,7 +1159,7 @@ function tabFile(P) {
   const sorted = offs.filter(([, o]) => o).map(([, o]) => o).sort((a, b) => a - b).concat([d.length]);
   const size = o => o ? sorted[sorted.indexOf(o) + 1] - o : 0;
   const row = (a, b, c = '') => `<tr><td class="k">${a}</td><td>${b}</td><td class="dim">${c}</td></tr>`;
-  P.innerHTML = `<div class="section"><b>${esc(S.file.id)}</b><div class="dim small">version 0x${la.version.toString(16)} · ${la.ps2 ? (la.hd ? 'little-endian (MGS3 PS3 HD port, 1280×720 layout)' : 'little-endian (PS2)') : la.le ? 'little-endian (PC)' : 'big-endian (PS3)'} · ${d.length} bytes${S.edits.has(S.file.id) ? ' · edited' : ''}</div></div>
+  P.innerHTML = `<div class="section"><b>${esc(S.file.id)}</b><div class="dim small">version 0x${la.version.toString(16)} · ${la.ps2 ? (la.hd ? 'little-endian (MGS3 PS3 HD port, 1280×720 layout)' : 'little-endian (PS2)') : la.psp ? 'little-endian (Portable Ops, PSP)' : la.le ? 'little-endian (PC)' : 'big-endian (PS3)'} · ${d.length} bytes${S.edits.has(S.file.id) ? ' · edited' : ''}</div></div>
     <div class="section"><h3>Sections (tagLA2_HEADER)</h3><table>${offs.map(([n, o]) => row(n, o ? '0x' + o.toString(16) : '—', o ? size(o) + ' bytes' : '')).join('')}</table></div>
     <div class="section"><h3>Object counts (tagLA2_OBJ_DEF_HEADER)</h3><div class="dim small">Rebuilt on every structural edit.</div><table>${OBJ_DEF_NAMES.map((n, i) => row(n, la.obj_counts[i])).join('')}</table></div>
     <div class="section"><h3>Layers</h3><table>${la.layers.map(([h, st, c], i) => row(i + ' #' + hex(h), c + ' objects', 'status ' + st + (st & 1 ? ' (display off)' : ''))).join('') || row('none', '')}</table></div>

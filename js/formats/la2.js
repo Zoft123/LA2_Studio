@@ -16,6 +16,7 @@
 // keep PS2 coordinates.
 import { Reader, latin1 } from '../core/bin.js';
 import { triTexKey } from './tri.js';
+import { txpTexKey } from './txp.js';
 
 export const SECTIONS = ['obj_def', 'status', 'action', 'action_table', 'tri', 'keyname', 'tex_tbl', 'color_tbl',
   'uv_tbl', 'ctrl_vertex_tbl', 'font', 'layer'];
@@ -172,6 +173,13 @@ export class LA2 {
     this.actionHash = new Map([...this.named].map(([h, i]) => [i, h]));
     this.layers = this._layers();
     this.fonts = this._fonts();
+  }
+  /** Metal Gear Solid: Portable Ops (PSP): an LE version-8 layout whose textures are TXP textures, named by
+   *  (texture hash, TXP name hash) and mapped like PS2 layouts (UVs 0..65535 of the texture's region). The header
+   *  is the same as Metal Gear Arcade's, so the texture source decides (Library.isPspLayout). */
+  usePspTextures() {
+    this.psp = true;
+    this.texKeys = this.tex_tbl.map(([h, txp]) => txpTexKey(h, txp));
   }
   _u32list(name) {
     const o = this.offsets[name];

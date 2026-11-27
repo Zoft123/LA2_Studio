@@ -604,7 +604,7 @@ export class Scene {
     if (key === undefined) return null;
     const info = this.tx && this.tx.lookup(key);
     if (!info) return null;
-    const ps2 = this.la.ps2;
+    const ps2 = this.la.ps2 || this.la.psp;          // Portable Ops (PSP) maps UVs like the PS2 layouts
     let pts = st.uvPoints || (st.uv === null || st.uv >= this.la.uv_tbl.length ? null : this.la.uv_tbl[st.uv]);
     if (!pts && ps2) pts = [[0, 0], [65535, 65535]];      // PS2: no UV entry = the whole texture region
     if (!pts) return { tex: key, uv: null };
@@ -696,7 +696,7 @@ export class Scene {
       if (info && la.la3) {                       // LA3: 1/16 texel of the texture's layout size (see _uv)
         const U = a => info.u0 + a / la.uvUnit / info.lw * info.uw, V = b => info.v0 + b / la.uvUnit / info.lh * info.vh;
         uv = [[U(u0), V(v0)], [U(u1), V(v0)], [U(u1), V(v1)], [U(u0), V(v1)]];
-      } else if (info && la.ps2) {
+      } else if (info && (la.ps2 || la.psp)) {
         const U0 = info.u0 + u0 / 65535 * info.uw, U1 = info.u0 + u1 / 65535 * info.uw;
         const V0 = info.v0 + v0 / 65535 * info.vh, V1 = info.v0 + v1 / 65535 * info.vh;
         uv = [[U0, V0], [U1, V0], [U1, V1], [U0, V1]];

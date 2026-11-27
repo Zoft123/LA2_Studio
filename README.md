@@ -1,6 +1,6 @@
 # LA2 Studio
 
-**View, play, edit and export LA2 layouts — the animated 2D interface files of the MGS4 engine, and now of Metal Gear Solid 3 / Metal Gear Online on PS2, the PS3 HD port of MGS3 and Peace Walker HD's LA3 — right in your browser.**
+**View, play, edit and export LA2 layouts — the animated 2D interface files of the MGS4 engine, and now of Metal Gear Solid 3 / Metal Gear Online on PS2, the PS3 HD port of MGS3, Portable Ops on PSP and Peace Walker HD's LA3 — right in your browser.**
 
 LA2 is the layout and animation format of *libla*, the 2D library of the engine behind **Metal Gear Solid 4**,
 **Metal Gear Online 2** and **Metal Gear Arcade**. Every HUD, menu, icon, loading screen and telop in those games is
@@ -131,6 +131,7 @@ animations, or when you need every pixel exact.
 | Metal Gear Arcade | PC | `stage/*/Dar/*.la2`, `*.dar` | little-endian archives |
 | Metal Gear Solid 3 / Metal Gear Online (Subsistence) | PS2 | loose `stage/<name>/<hash>.la2` | view and playback only; textures from the folder's `<hash>.tri` files |
 | Metal Gear Solid 3 HD | PS3 | `mgs3/<lang>/stage/<name>/cache/*.la2`, `mgs3/<lang>/slot/…` | view and playback only; HD textures from `mgs3/stage/<name>/cache/_ps3/*.ctxr` — open the whole `mgs3` folder (extracted from `mgs3.psarc`) so both trees are included |
+| Metal Gear Solid: Portable Ops | PSP | `USRDIR/stage/<name>/` once its `.zar` is unpacked: `.dar` archives (`.la2` inside) or their extracted files | LA2 version 8 (little-endian), view, play, edit and export; textures from `.txp` files inside the stage's `.qar` or extracted beside it (`cache.qar_extracted`) |
 | Metal Gear Solid: Peace Walker HD | PS3 | `disc0_rel/stage/<name>/*.dar` (`.la3` inside), loose `.la3`, unpacked `SLOT.DAT` slots | LA3 versions 4, 5 and 7, view and playback only; textures from `.txp` files, loose or inside the stage's `.qar` archives |
 
 Open the folder that holds the files — a single stage, a `slotdat` folder, `USRDIR/o`, or a whole game tree.
@@ -267,7 +268,7 @@ Plain ES modules, no build step. Vendored libraries (MIT): [fflate](https://gith
 ```
 index.html, css/          the page
 js/core/bin.js            binary reading / writing, the MGS string hash
-js/formats/               la2.js (reader), model.js (writer and edits), archives.js (DAR / QAR / PW QAR / DLZ),
+js/formats/               la2.js (reader), model.js (writer and edits), archives.js (DAR / QAR / PW + PO QAR / DLZ),
                           textures.js (TXN / DLD / DXT decoding), tri.js (PS2 TRI / GS memory), ctxr.js (MGS3 HD
                           PS3 textures), la3.js (Peace Walker LA3, converted to LA2), txp.js (Peace Walker
                           textures), dxtenc.js (DXT encoding), mgo2crypt.js
@@ -280,6 +281,7 @@ tests/check.mjs           `npm test`: playback, export, crop and app regression 
 tests/run.mjs             round-trip tests against your own game files
 tests/ps2-render.mjs      software render of PS2 (MGS3 / MGO1) and MGS3 HD stage folders to PNG, using the real engine
 tests/pw-render.mjs       the same for Peace Walker HD folders (.la3 with their .txp / .qar textures)
+tests/po-render.mjs       the same for Portable Ops stage folders (.la2 with their .txp / .qar textures)
 tests/raster.mjs          the software rasteriser both render checks use
 tests/render.html         WebGL2 alpha and crop checks, run in a browser
 tests/serve.py            development server for automated browser tests

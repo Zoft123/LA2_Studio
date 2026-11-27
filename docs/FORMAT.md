@@ -347,7 +347,34 @@ their own distance from the edges (no quarter-texel inset).
   u16 height (layout texels), u32 ?}`. Layouts name a
   texture by (texture hash, TXP hash).
 
+### Portable Ops (PSP): LA2 version 8 and its TXPs
+
+*Metal Gear Solid: Portable Ops* layouts are ordinary little-endian LA2 version `0x10008` files (the same header as
+Metal Gear Arcade's), inside each stage's `.zar` (`cache.dar`; textures in `cache.qar`). Two things differ from MGA:
+
+- the texture table pairs are (texture hash, TXP hash), and the TXP hash is StrCode24 of the TXP's file name (its
+  QAR id); a texture is looked up by both, like the PS2 TRI textures;
+- UVs and glyph UVs are 0…65535 of the texture's region (as on PS2), not texels; no quarter-texel inset.
+
+The header cannot tell Portable Ops from MGA, so LA2 Studio decides from the textures: a version-8 LE layout whose
+texture table resolves to (texture, TXP) keys of the folder's TXPs is read as Portable Ops.
+
+**Portable Ops TXP** (little-endian; no hash of its own):
+
+- header `{u32 0, u32 flags, u32 image count, u32 image table (0x20), u32 texture count, u32 texture table,
+  u32 0, u32 0}`.
+- image, 16 bytes: `{u16 width, u16 height (log2(buffer) << 12 | size), u16 format (4: 4-bit, 5: 8-bit indices),
+  u16 flags (2: zlib-compressed pixels: u32 compressed size, then a zlib stream), u32 pixel offset, u32 palette
+  offset}`. The palette is RGBA8888 with full 0…255 alpha. Pixels are PSP-swizzled (16-byte × 8-row blocks) with
+  the **visible** width as the stride, `width × height` of them (not the power-of-two buffer).
+- texture, 48 bytes: `{u32 flags, u32 hash, u32 0, u16 width, u16 height (layout texels), u32 0, u32 image record
+  offset, u32 0, f32 u, f32 v, f32 width, f32 height, u32 0}`; u / v / width / height are fractions of the buffer,
+  texel-centred (`u = 0.5 / buffer width` for a texture that starts at the left edge).
+
+All 526 distinct Portable Ops TXPs (7,461 images) use these formats.
+
 **PW QAR** (`*.qar`, little-endian): the files at 0x1000 boundaries, then (at the offset in the last `u32`)
 `{u32 count, count × (u32 id = StrCode24(name) | type << 24, u32 size)}` and the names, NUL-terminated, in the same
-order. (Tools that pack the files back to back instead cut every file but the first wrongly.) **PW DAR** is the
+order. (Tools that pack the files back to back instead cut every file but the first wrongly.) **Portable Ops QAR**
+is the same with the files at 0x80 boundaries. **PW DAR** is the
 MGS4 DAR layout, little-endian. StrCode24: `x = ((x << 5 | x >> 19) + c) & 0xFFFFFF` over the name's bytes.

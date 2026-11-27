@@ -172,9 +172,9 @@ export class TexturePool {
   /** Peace Walker TXP: its textures under txpTexKey(texture, TXP). Texture rectangles use the TXP image's
    *  power-of-two buffer dimensions. A PS3 DDS can contain extra padding; that padding does not scale the UVs
    *  (PS3 EBOOT 2D6F8 -> C51020 -> C2018C -> C20F60). Images decode on first use. */
-  addTxp(bytes) {
-    const txp = parseTxp(bytes);
-    if (!txp) return false;
+  addTxp(bytes, nameHash = null) {
+    const txp = parseTxp(bytes, nameHash);       // nameHash: Portable Ops TXPs have no hash of their own
+    if (!txp || txp.hash === null) return false;
     for (const t of txp.textures) {
       const key = txpTexKey(t.hash, txp.hash);
       if (this.infos.has(key)) continue;
