@@ -96,6 +96,8 @@
     <p class="dim small">MGO2 stage files are decrypted with a key named after their stage folder. It is found from the folder path (or by trying the folder names you opened); set it here only for copies kept outside the <code>stage/&lt;name&gt;</code> layout under an unrelated name.</p>
     <label><input type="checkbox" id="showGuides"> Draw guide shapes</label>
     <p class="dim small">Some MGS4 layouts (converted from Flash) contain mask / guide shapes, marked by extra bits in their object type, that the game never draws. They are hidden unless this is ticked.</p>
+    <label><input type="checkbox" id="showPlaceholders"> Draw runtime text fields</label>
+    <p class="dim small">Text the game writes while it runs (MGS3 item descriptions, MGO2 player names, …) is reserved in layouts as a string of @ characters drawn with a box glyph. The game never shows those boxes, so they are hidden unless this is ticked.</p>
     <div class="row end"><button value="close" class="primary">Done</button></div>
   </form>
 </dialog>

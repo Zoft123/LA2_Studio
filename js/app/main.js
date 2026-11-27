@@ -4,7 +4,7 @@ import { LA2, OBJ_TYPES, PACKETS, SECTION_NAMES, OBJ_DEF_NAMES, statusFields, pa
 import { Model } from '../formats/model.js';
 import { readDar, writeDar } from '../formats/archives.js';
 import { encrypt } from '../formats/mgo2crypt.js';
-import { Scene, Timeline, COMMANDS, TICKS_PER_SECOND } from '../engine/scene.js';
+import { Scene, Timeline, COMMANDS, TICKS_PER_SECOND, isRuntimeTextField } from '../engine/scene.js';
 import { Renderer } from '../engine/gl.js';
 import { CropControls } from './crop.js';
 import { layoutPoint } from '../engine/viewport.js';
@@ -194,6 +194,7 @@ async function openFile(f, keep = null) {
     if (!S.ws && S.tab === 'weapons') S.tab = 'objects';
     if (!keep) { S.sel = null; S.hideObj = new Set(); S.hideLayer = new Set(); }
     S.scene.hidden = S.hideObj; S.scene.hiddenLayers = S.hideLayer; S.scene.showGuides = !!settings.guides;
+    S.scene.showPlaceholders = !!settings.placeholders;
     cropControls.open(f.id, flashStage(la, f.path));
     const pd = $('#action');
     pd.innerHTML = '<option value="-1">Initial state</option>' + la.actions.map((a, i) => {
@@ -587,6 +588,7 @@ $('#exportAnim').onclick = async () => {
     // a private scene, timeline and GL context so the preview is untouched
     const scene = new Scene(S.la, S.lib);
     scene.hidden = S.hideObj; scene.hiddenLayers = S.hideLayer; scene.showGuides = !!settings.guides;
+    scene.showPlaceholders = !!settings.placeholders;
     if (S.ws) S.ws.apply(scene, wsCfg);
     const tl = new Timeline(S.la, a, currentPlaybackMode(), { also: S.also });
     scene.setTimeline(tl);
@@ -642,14 +644,18 @@ $('#exportAnim').onclick = async () => {
 };
 
 // ---- settings ------------------------------------------------------------------------------------------------
-$('#settingsBtn').onclick = () => { $('#keyOverride').value = settings.key || ''; $('#showGuides').checked = !!settings.guides; $('#settings').showModal(); };
+$('#settingsBtn').onclick = () => {
+  $('#keyOverride').value = settings.key || ''; $('#showGuides').checked = !!settings.guides;
+  $('#showPlaceholders').checked = !!settings.placeholders; $('#settings').showModal();
+};
 $('#settings').addEventListener('close', () => {
   settings.key = $('#keyOverride').value.trim();
   if (settings.key && !settings.key.startsWith('stage/')) settings.key = 'stage/' + settings.key;
   settings.guides = $('#showGuides').checked;
+  settings.placeholders = $('#showPlaceholders').checked;
   saveSettings();
   if (S.lib) { S.lib.settings = settings; S.lib.raw.clear(); }
-  if (S.scene) { S.scene.showGuides = settings.guides; render(); }
+  if (S.scene) { S.scene.showGuides = settings.guides; S.scene.showPlaceholders = settings.placeholders; render(); }
 });
 
 // ---- keyboard ---------------------------------------------------------------------------------------------------
@@ -885,7 +891,8 @@ function tabText(P) {
     const k = nth.get(t.block) || 0; nth.set(t.block, k + 1);
     const fid = fontId(t.block) ?? (owner ? fontId(owner.index) : undefined) ?? 1;
     const font = la.fonts[fid > 0 ? fid - 1 : 0] || la.fonts[0], s = latin1.decode(t.text);
-    return { ...t, i, nth: k, s, owner, uses, font: la.fonts.indexOf(font), missing: font ? missingGlyphs(font, s) : [] };
+    return { ...t, i, nth: k, s, owner, uses, font: la.fonts.indexOf(font), missing: font ? missingGlyphs(font, s) : [],
+      runtime: isRuntimeTextField(font, t.text) };
   });
   const actName = a => `action ${a}${la.actionHash.has(a) ? ' #' + hex(la.actionHash.get(a)) : ''}`;
   const where = r => r.block < nobj ? 'initial state' : r.uses.length ? 'set by ' + r.uses.map(u => `<a data-act="${u.action}">${actName(u.action)}</a>`).join(', ') : `block ${r.block} (no key uses it)`;
@@ -898,7 +905,8 @@ function tabText(P) {
       <span class="dim">click one to insert it into the string being edited</span></div><div class="glyphs" id="glyphList"></div></details>` : '') +
     (rows.length ? rows.map(r => `<div class="trow" data-ti="${r.i}"><div class="tmeta">${label(r)} · ${where(r)}</div>
       <textarea data-ti="${r.i}" rows="${Math.min(6, r.s.split('\n').length)}" spellcheck="false" aria-label="Text ${r.i + 1}"></textarea>
-      ${r.missing.length ? `<div class="warn small">not in the font, not drawn: ${r.missing.map(c => esc(showChar(c))).join(' ')}</div>` : ''}</div>`).join('')
+      ${r.missing.length ? `<div class="warn small">not in the font, not drawn: ${r.missing.map(c => esc(showChar(c))).join(' ')}</div>` : ''}
+      ${r.runtime ? '<div class="dim small">runtime text field: the game writes this text while it runs; the @ boxes only reserve the space and are not drawn (Settings → Draw runtime text fields)</div>' : ''}</div>`).join('')
       : '<div class="pad dim">This layout has no text.</div>') +
     (texts.length > rows.length ? `<div class="pad dim">… ${texts.length - rows.length} more strings</div>` : '');
   const commit = async (ta, keepFocus) => {

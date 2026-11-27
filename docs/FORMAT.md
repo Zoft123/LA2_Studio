@@ -192,6 +192,11 @@ Any other command hash is passed to the game as a signal.
    the string's mode within its box width, with `space` added between letters (justify spreads them).
 7. Typing: in mode 1 one letter appears every *typeSpeed* ticks after the mode was set, each fading from the first
    to the end colour over *colorSpeed* ticks.
+8. Runtime text fields: text the game writes while it runs (MGS3 item descriptions and dialogs, MGO1 / MGO2 player
+   names, ...) is reserved as a string of only `@` (and line breaks) in a font whose `@` cell is a square taken from
+   the top-left of its texture, a sheet of box frames. `@` never appears in real text in these fonts, and the game
+   never shows the boxes: LA2 Studio leaves them out unless Settings → Draw runtime text fields is ticked
+   (819 such strings in MGS3 / MGO1 layouts, 445 in MGO2's r_sna01_n).
 
 ## Tables
 

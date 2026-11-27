@@ -26,6 +26,20 @@ const mix = (a, b, t) => {
 const UV_INSET = 0.25;
 /** Lookup key of texture-table entry i (TRI-qualified on PS2); undefined when there is no such entry. */
 const texKey = (la, i) => la.texKeys ? la.texKeys[i] : la.tex_tbl[i]?.[0];
+/** Runtime text field: a string of only '@' (plus line breaks / spaces) in a font whose '@' cell is a square box
+ *  taken from the top-left of its texture (a frame sheet, not a letter). Layouts reserve text the game writes at
+ *  run time this way (MGS3 item descriptions, MGO2 player names, ...): '@' is never mixed into real text, and the
+ *  game never shows the boxes, so they are drawn only when asked for (Scene.showPlaceholders). */
+export function isRuntimeTextField(font, raw) {
+  const g = font?.glyphs.get('@');
+  if (!g) return false;
+  const [w, h, u0, u1, v0, v1] = g;
+  const boxGlyph = w === h && u0 === 0 && v0 === 0 && u1 === v1 && u1 >= 0x4000;   // square, >= 1/4 of the texture
+  if (!boxGlyph) return false;
+  const s = latin1.decode(raw).replace(/\\[nr]|[\n\r ]/g, '');
+  return s.length > 0 && /^@+$/.test(s);
+}
+
 function insetUV(uv) {
   const cx = uv.reduce((s, p) => s + p[0], 0) / uv.length, cy = uv.reduce((s, p) => s + p[1], 0) / uv.length;
   const step = (v, c) => v < c ? v + UV_INSET : v > c ? v - UV_INSET : v;
@@ -586,6 +600,7 @@ export class Scene {
     const info = key !== undefined && this.tx ? this.tx.lookup(key) : null;
     const [space, mode, fid] = st.layout;
     const font = la.fonts[fid > 0 ? fid - 1 : 0] || la.fonts[0];
+    if (!this.showPlaceholders && isRuntimeTextField(font, st.text)) return [];
     let letters = this.layout(font, st.text, st.wh[0] ? st.wh[0][0] : 0, space, mode);
     let cols = letters.map(() => col);
     if (o.type === 11) {
